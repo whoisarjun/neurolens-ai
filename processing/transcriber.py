@@ -1,3 +1,6 @@
+# Whisper-based ASR transcription
+
+import librosa
 import whisper
 import warnings
 from pathlib import Path
@@ -9,16 +12,18 @@ warnings.filterwarnings(
 )
 
 print('[ASR] Loading whisper model')
-model = whisper.load_model('medium')
+model = whisper.load_model('large')
 
-def asr(fp: Path, lang='en', verbose=False):
+def asr(fp: Path, verbose=False):
     if verbose:
         print('[ASR] Transcribing')
     result = model.transcribe(str(fp))
     if verbose:
         print('[ASR] Done transcribing')
+    y, sr = librosa.load(str(fp), sr=16000)
     return {
         'text': result.get('text'),
+        'duration': len(y) / sr,
         'segments': [{
             'text': s.get('text'),
             'start': s.get('start'),
