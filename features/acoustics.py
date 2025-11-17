@@ -63,7 +63,7 @@ def _vad(y: np.ndarray, sr: int):
 
     return y_vad, sr, len(y_vad) / sr, pause_count
 
-# ========== PROSODY/VOICE ========== #
+# ========== FEATURE EXTRACTION ========== #
 
 # Features 1-4, 10: F0 (Pitch), Pause count
 def _f0(fn: Path):
