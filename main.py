@@ -30,6 +30,7 @@ input_vector: np.array = np.concatenate([
     linguistic_features,
     llm_scores
 ])
+
 print('Input vector:')
 print(input_vector)
 print('Shape:')
