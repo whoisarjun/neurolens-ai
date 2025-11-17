@@ -157,7 +157,10 @@ def _semantic_coherence(transcript: dict):
 
 # ========== COMBINE EVERYTHING ========== #
 
-def extract(transcript: dict):
+def extract(transcript: dict, verbose=False):
+    if verbose:
+        print('[LING] Extracting linguistic features')
+
     total_tokens, unique_tokens, type_token_ratio, mean_words_per_utterance, max_utterance_length, sentence_count = _text_stats(transcript)
     content_words_ratio, function_words_ratio, rare_words_ratio = _lexical_richness(transcript)
     filler_count, repetition_score, bigram_repetition_ratio, self_correction_count = _repetition_disfluency(transcript)
@@ -176,5 +179,8 @@ def extract(transcript: dict):
         # Semantic coherence (2)
         semantic_coherence_mean, semantic_coherence_variance
     ])
+
+    if verbose:
+        print('[LING] Done extracting')
 
     return LINGUISTIC_FEATURES

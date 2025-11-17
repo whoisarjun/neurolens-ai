@@ -19,14 +19,15 @@ compute_type = "float32"
 faster_whisper_model = 'nyrahealth/faster_CrisperWhisper'
 
 print('[ASR] Loading whisper model')
-model = whisper.load_model('large')
+model = whisper.load_model('large-v3-turbo')
 print('[ASR] Loading crisper-whisper model')
 modelx = whisperx.load_model(faster_whisper_model, device=DEVICE, compute_type=compute_type)
 
 def asr(fp: Path, verbose=False):
     if verbose:
         print('[ASR] Transcribing')
-    result = model.transcribe(str(fp))
+    result = model.transcribe(str(fp),
+                              condition_on_previous_text=False)
     if verbose:
         print('[ASR] Transcribing (CrisperWhisper)')
     resultx = modelx.transcribe(str(fp))

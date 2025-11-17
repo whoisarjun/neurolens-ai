@@ -178,7 +178,10 @@ def _spectral(y, sr):
 
 # ========== COMBINE EVERYTHING ========== #
 
-def extract(fn: Path, transcript: dict):
+def extract(fn: Path, transcript: dict, verbose=False):
+    if verbose:
+        print('[ACOU] Extracting acoustic features')
+
     mean_f0, std_f0, min_f0, max_f0, duration, vad_duration, pause_count, vad_y, vad_sr = _f0(fn)
     mean_energy, std_energy, energy_range = _energy(fn)
     words_ps, syllables_ps = _speed(transcript, vad_duration)
@@ -206,5 +209,8 @@ def extract(fn: Path, transcript: dict):
         spectral_centroid_mean, spectral_centroid_std,
         spectral_bandwidth_mean, spectral_bandwidth_std
     ])
+
+    if verbose:
+        print('[ACOU] Done extracting')
 
     return ACOUSTIC_FEATURES

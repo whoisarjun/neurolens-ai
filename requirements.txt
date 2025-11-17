@@ -13,3 +13,4 @@ sentence-transformers~=5.1.2
 torch~=2.8.0
 whisperx~=3.7.4
 faster-whisper~=1.2.1
+ollama~=0.6.1

@@ -80,6 +80,25 @@ Only the **acoustic section** is filled for now — the other sections are place
 
 ---
 
-## 🧠 LLM Cognitive Reasoning Scores (coming soon)
+## 🧠 LLM Cognitive Reasoning Scores (18)
 
-*(Will be filled when `llm_scores.py` is done.)*
+| #  | Category                         | Feature Name                         | Description                                                           |
+|----|----------------------------------|--------------------------------------|-----------------------------------------------------------------------|
+| 1  | Semantic Understanding           | Semantic memory degradation          | Mis-remembering facts, confabulation, memory-failure signals          |
+| 2  | Semantic Understanding           | Narrative structure disintegration   | Temporal disorder, missing causal links, broken storyline             |
+| 3  | Semantic Understanding           | Pragmatic appropriateness            | Answer fits the question intent, not over/under-explained             |
+| 4  | Semantic Understanding           | Topic maintenance                    | Rate at which the speaker drifts off-topic                            |
+| 5  | Clinical Signature Behaviors     | Perseveration types                  | Stuck loops, intrusive repetition, returning to old ideas             |
+| 6  | Clinical Signature Behaviors     | Disorientation types                 | Temporal, spatial, or personal confusion                              |
+| 7  | Clinical Signature Behaviors     | Executive dysfunction patterns       | Not answering questions, filler responses, inability to plan          |
+| 8  | Clinical Signature Behaviors     | Abstract reasoning                   | Inability to generalize, overly literal answers                       |
+| 9  | Discourse-Level Signals          | Semantic clustering vs fragmentation | Sentences cluster into themes vs fragmented ideas                     |
+| 10 | Discourse-Level Signals          | Emotional appropriateness            | Emotional tone matches or mismatches content                          |
+| 11 | Discourse-Level Signals          | Novel information content            | Amount of new meaningful information per unit speech                  |
+| 12 | Discourse-Level Signals          | Ambiguity & vagueness                | Overuse of vague/empty expressions (“that thing”, “the place”)        |
+| 13 | Q/A Relationship                 | Instruction following                | Whether the answer addresses the actual question                      |
+| 14 | Q/A Relationship                 | Logical self-consistency             | Contradictions within an answer                                       |
+| 15 | Q/A Relationship                 | Confabulation                        | Plausible but fabricated details or stories                           |
+| 16 | Meta-Features                    | Clinical impression                  | LLM-estimated cognitive impairment severity                           |
+| 17 | Meta-Features                    | Error type classification            | Semantic, retrieval, syntactic, phonological, or executive errors     |
+| 18 | Meta-Features                    | Compensation strategies              | Circumlocution, avoidance, meta-comments about memory                 |
