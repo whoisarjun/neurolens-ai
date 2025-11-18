@@ -2,13 +2,22 @@
 
 import re
 import json
+import pickle
+import hashlib
 import numpy as np
 from tqdm import tqdm
 from ollama import chat
+from pathlib import Path
 from ollama import ChatResponse
+from concurrent.futures import ThreadPoolExecutor
+
+CACHE_DIR = Path('cache/llm_scores')
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+MODEL = 'qwen2.5:7b'
 
 def _ask(prompt: str):
-    response: ChatResponse = chat(model='deepseek-r1:32b', messages=[
+    response: ChatResponse = chat(model=MODEL, messages=[
       {
         'role': 'user',
         'content': prompt,
@@ -78,6 +87,10 @@ def _parse_scores(raw: str, features: list[dict]) -> list[int]:
         raise
 
     return [item['score'] for item in data['scores']]
+
+def _get_cache_key(question: str, transcript: str):
+    content = f"{question}||{transcript}"
+    return hashlib.md5(content.encode()).hexdigest()
 
 # ========== FEATURE EXTRACTION ========== #
 
@@ -284,48 +297,45 @@ feature_list = [
 
 def _ask_features(question: str, transcript: dict, features: list[dict], verbose=False):
     sections = [
-        features[0:4],     # Semantic understanding
-        features[4:8],     # Clinical signature behaviors
-        features[8:12],    # Discourse-level signals
-        features[12:15],   # Q/A relationship
-        features[15:18]    # Meta-features
+        features[0:4], features[4:8], features[8:12], features[12:15], features[15:18]
     ]
 
-    if verbose:
-        section_iter = tqdm(sections, total=len(sections), desc='[LLM] LLM score sections')
-    else:
-        section_iter = sections
-
-    scores = []
-    for s in section_iter:
-        attempt = 0
-        parsed = None
-
-        while attempt < 5:
-            raw = _prompt(question, transcript.get('text', ''), s)
+    def process_section(s):
+        for attempt in range(5):
             try:
-                parsed = _parse_scores(raw, s)
-                break
+                raw = _prompt(question, transcript.get('text', ''), s)
+                return _parse_scores(raw, s)
             except Exception:
-                attempt += 1
+                if attempt == 4:
+                    return [0 for _ in s]
+        return [0 for _ in s]
 
-        if parsed is None:
-            # fallback: replace all with 0s for this section
-            parsed = [0 for _ in s]
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(process_section, sections))
 
-        scores += parsed
-
-    return scores
+    return [score for section_scores in results for score in section_scores]
 
 # ========== COMBINE EVERYTHING ========== #
 
 def extract(question: str, transcript: dict, verbose=False):
+    cache_key = _get_cache_key(question, transcript.get('text', ''))
+    cache_file = CACHE_DIR / f"{cache_key}.pkl"
+
+    # Check cache first
+    if cache_file.exists():
+        if verbose:
+            print('[LLM] Loading cached scores')
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+
+    # Generate scores
     if verbose:
         print('[LLM] Producing LLM scores')
+    scores = np.array(_ask_features(question, transcript, feature_list, verbose), dtype=np.float32)
 
-    LLM_SCORES = np.array(_ask_features(question, transcript, feature_list, verbose), dtype=np.float32)
+    # Save to cache
+    with open(cache_file, 'wb') as f:
+        pickle.dump(scores, f)
 
-    if verbose:
-        print('[LLM] Done producing scores')
+    return scores
 
-    return LLM_SCORES

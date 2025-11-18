@@ -30,7 +30,7 @@ def asr(fp: Path, verbose=False):
                               condition_on_previous_text=False)
     if verbose:
         print('[ASR] Transcribing (CrisperWhisper)')
-    resultx = modelx.transcribe(str(fp))
+    resultx = modelx.transcribe(str(fp), language='en')
     if verbose:
         print('[ASR] Done transcribing')
     y, sr = librosa.load(str(fp), sr=16000)
