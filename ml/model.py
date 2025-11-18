@@ -6,18 +6,18 @@ from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset, DataLoader
 
-# neural network: 75 -> 128 -> 64 -> 1
+# neural network: 75 -> 32 -> 16 -> 1
 class MMSERegression(nn.Module):
     def __init__(self, dropout=0.2):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(75, 128),
+            nn.Linear(75, 32),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(128, 64),
+            nn.Dropout(0.2),
+            nn.Linear(32, 16),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, 1),
+            nn.Dropout(0.2),
+            nn.Linear(16, 1)
         )
 
     def forward(self, x):
