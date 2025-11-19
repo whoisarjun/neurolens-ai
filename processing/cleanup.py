@@ -28,6 +28,11 @@ def normalize(from_fp: Path, to_fp: Path, verbose=False):
     if sr != target_sr:
         y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
 
+    # peak normalization
+    peak = max(abs(y))
+    if peak > 0:
+        y = y / peak * 0.99
+
     # ensure output directory exists
     to_fp.parent.mkdir(parents=True, exist_ok=True)
 

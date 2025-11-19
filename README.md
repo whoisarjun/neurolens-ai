@@ -101,7 +101,7 @@ model.load_scaler('test/model_scaler.pkl')
 ```
 ---
 ### Todo:
-- constrain mmse predictions to [0, 30] using sigmoid
+- ✅ constrain mmse predictions to [0, 30] using sigmoid
 - improve transcription
 - find more training data
 - add more relevant features

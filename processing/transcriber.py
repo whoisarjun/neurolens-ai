@@ -26,8 +26,15 @@ modelx = whisperx.load_model(faster_whisper_model, device=DEVICE, compute_type=c
 def asr(fp: Path, verbose=False):
     if verbose:
         print('[ASR] Transcribing')
-    result = model.transcribe(str(fp),
-                              condition_on_previous_text=False)
+    result = model.transcribe(
+        str(fp),
+        language='en',
+        task='transcribe',
+        temperature=0.0,
+        best_of=1,
+        beam_size=5,
+        condition_on_previous_text=False
+    )
     if verbose:
         print('[ASR] Transcribing (CrisperWhisper)')
     resultx = modelx.transcribe(str(fp), language='en')
