@@ -6,6 +6,8 @@ from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset, DataLoader
 
+MMSE_LIMIT = 30
+
 # neural network: 75 -> 32 -> 16 -> 1
 class MMSERegression(nn.Module):
     def __init__(self, dropout=0.2):
@@ -17,7 +19,8 @@ class MMSERegression(nn.Module):
             nn.Linear(32, 16),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(16, 1)
+            nn.Linear(16, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -75,7 +78,7 @@ def train_step(x, y):
     y = y.to(device)
 
     optimizer.zero_grad()
-    pred = regressor(x)
+    pred = regressor(x) * MMSE_LIMIT
     loss = criterion(pred, y)
     loss.backward()
     optimizer.step()
@@ -108,7 +111,7 @@ def test(loader):
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
 
-            pred = regressor(batch_x)
+            pred = regressor(batch_x) * MMSE_LIMIT
             loss = criterion(pred, batch_y)
 
             total_loss += loss.item()
