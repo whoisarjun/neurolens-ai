@@ -10,7 +10,7 @@ MMSE_LIMIT = 30
 
 # neural network: 75 -> 32 -> 16 -> 1
 class MMSERegression(nn.Module):
-    def __init__(self, dropout=0.2):
+    def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(75, 32),
@@ -34,7 +34,7 @@ scaler_fitted = False
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 regressor = MMSERegression().to(device)
-criterion = nn.MSELoss()
+criterion = nn.L1Loss()
 optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)
 
 # ========== FEATURE SCALING ========== #

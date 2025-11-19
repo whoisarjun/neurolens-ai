@@ -3,7 +3,9 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 import torch
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+torch.backends.cudnn.enabled = False
+torch.backends.cudnn.benchmark = False
 
 from processing import cleanup, transcriber
 from features import acoustics, linguistics, llm_scores
@@ -57,60 +59,6 @@ def process_single_item(item):
         # Return error so we can track failures
         return None, None, str(e)
 
-
-# GPU-optimized processing with threading
-def process_split_gpu(split_data, max_workers=5):
-    print(f'Using {max_workers} parallel threads (GPU mode)')
-    print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CUDA not available!"}')
-
-    X = []
-    y = []
-    errors = []
-
-    # Use ThreadPoolExecutor (threads share GPU memory)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_item = {
-            executor.submit(process_single_item, item): item
-            for item in split_data
-        }
-
-        # Collect results as they complete (with progress bar)
-        for future in tqdm(as_completed(future_to_item), total=len(split_data), desc="Processing (GPU)"):
-            item = future_to_item[future]
-            try:
-                input_vector, mmse_score, error = future.result()
-
-                if error is not None:
-                    errors.append({
-                        'file': item.get('input'),
-                        'error': error
-                    })
-                    print(f"\n⚠️  Error processing {item.get('input')}: {error}")
-                else:
-                    X.append(input_vector)
-                    y.append(mmse_score)
-
-            except Exception as e:
-                errors.append({
-                    'file': item.get('input'),
-                    'error': str(e)
-                })
-                print(f"\n⚠️  Unexpected error processing {item.get('input')}: {e}")
-
-    # Report any errors
-    if errors:
-        print(f"\n⚠️  {len(errors)} files failed to process:")
-        for err in errors[:5]:  # Show first 5
-            print(f"  - {err['file']}: {err['error']}")
-        if len(errors) > 5:
-            print(f"  ... and {len(errors) - 5} more")
-
-    X = np.array(X, dtype=np.float32)
-    y = np.array(y, dtype=np.float32)
-
-    return X, y
-
 # Sequential processing (for debugging)
 def process_split_sequential(split_data):
     """
@@ -155,10 +103,10 @@ def main():
         # OPTION 1: Threading (recommended for 4090)
         # Allows 4-6 files to process concurrently on GPU
         print('\nProcessing TRAIN split...')
-        X_train, y_train = process_split_gpu(train_data, max_workers=6)
+        X_train, y_train = process_split_sequential(train_data)
 
         print('\nProcessing TEST split...')
-        X_test, y_test = process_split_gpu(test_data, max_workers=6)
+        X_test, y_test = process_split_sequential(test_data)
     else:
         print('\n⚠️  No GPU detected. Using sequential processing.')
         X_train, y_train = process_split_sequential(train_data)

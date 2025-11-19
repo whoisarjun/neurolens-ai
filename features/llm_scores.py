@@ -9,7 +9,6 @@ from tqdm import tqdm
 from ollama import chat
 from pathlib import Path
 from ollama import ChatResponse
-from concurrent.futures import ThreadPoolExecutor
 
 CACHE_DIR = Path('cache/llm_scores')
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -68,8 +67,6 @@ FEATURES:
     return _ask(prompt)
 
 def _parse_scores(raw: str, features: list[dict]) -> list[int]:
-    original = raw  # keep a copy for debugging
-
     if "OUTPUT:" in raw:
         raw = raw.split("OUTPUT:", 1)[1].strip()
 
@@ -77,13 +74,13 @@ def _parse_scores(raw: str, features: list[dict]) -> list[int]:
     raw = re.sub(r"```$", "", raw).strip()
 
     if not raw:
-        print("LLM returned no JSON. Full response was:\n", original)
+        print("LLM returned no JSON.")
         raise ValueError("Empty JSON payload from LLM")
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        print("FAILED TO PARSE LLM RESPONSE. Full response:\n", original)
+        print("FAILED TO PARSE LLM RESPONSE.")
         raise
 
     return [item['score'] for item in data['scores']]
@@ -297,7 +294,11 @@ feature_list = [
 
 def _ask_features(question: str, transcript: dict, features: list[dict], verbose=False):
     sections = [
-        features[0:4], features[4:8], features[8:12], features[12:15], features[15:18]
+        features[0:4],
+        features[4:8],
+        features[8:12],
+        features[12:15],
+        features[15:18],
     ]
 
     def process_section(s):
@@ -310,9 +311,13 @@ def _ask_features(question: str, transcript: dict, features: list[dict], verbose
                     return [0 for _ in s]
         return [0 for _ in s]
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(process_section, sections))
+    # *** sequential execution — loop, no executor ***
+    results = []
+    for s in sections:
+        section_scores = process_section(s)
+        results.append(section_scores)
 
+    # flatten
     return [score for section_scores in results for score in section_scores]
 
 # ========== COMBINE EVERYTHING ========== #

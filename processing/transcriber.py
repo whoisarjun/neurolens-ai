@@ -21,7 +21,7 @@ faster_whisper_model = 'nyrahealth/faster_CrisperWhisper'
 print('[ASR] Loading whisper model')
 model = whisper.load_model('large-v3-turbo')
 print('[ASR] Loading crisper-whisper model')
-modelx = whisperx.load_model(faster_whisper_model, device=DEVICE, compute_type=compute_type)
+modelx = whisperx.load_model(faster_whisper_model, device=DEVICE, compute_type=compute_type, vad_method='silero')
 
 def asr(fp: Path, verbose=False):
     if verbose:
