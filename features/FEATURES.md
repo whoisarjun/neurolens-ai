@@ -1,10 +1,9 @@
 # Neurolens AI Feature Inventory
 
 This document lists **all feature types** extracted by this stage of the Neurolens pipeline:  
-- Acoustic features (`acoustics.py`)  
-- Linguistic features (`linguistics.py`)  
-- LLM-derived semantic scores (`semantics.py`)
-- 
+- 42 acoustic features (`acoustics.py`)  
+- 15 linguistic features (`linguistics.py`)  
+- 18 LLM-derived semantic scores (`semantics.py`)
 ---
 
 ## 🎧 Acoustic Features (42)

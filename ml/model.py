@@ -6,25 +6,67 @@ from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset, DataLoader
 
-MMSE_LIMIT = 30
-
-# neural network: 75 -> 32 -> 16 -> 1
+# neural network:
+#   A [# -> 64], L [# -> 32], S [# -> 32]
+#   A+L+S [128 -> 64 -> 32 -> 1]
 class MMSERegression(nn.Module):
-    def __init__(self):
+    def __init__(self, n_acoustics, n_linguistics, n_semantics, dropout=0.3):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(75, 32),
+
+        # save feature type count
+        self.n_acoustics = n_acoustics
+        self.n_linguistics = n_linguistics
+        self.n_semantics = n_semantics
+
+        # separate encoders for each feature type
+        self.acoustics_encoder = nn.Sequential(
+            nn.Linear(n_acoustics, 64),
+            nn.LayerNorm(64),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(32, 16),
+            nn.Dropout(dropout)
+        )
+        self.linguistics_encoder = nn.Sequential(
+            nn.Linear(n_linguistics, 32),
+            nn.LayerNorm(32),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(16, 1),
-            nn.Sigmoid()
+            nn.Dropout(dropout)
+        )
+        self.semantics_encoder = nn.Sequential(
+            nn.Linear(n_semantics, 32),
+            nn.LayerNorm(32),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+
+        # everything together
+        self.fusion = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(64, 32),
+            nn.LayerNorm(32),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(32, 1)
         )
 
     def forward(self, x):
-        return self.net(x)
+        acoustic_features = x[:, self.n_acoustics]
+        linguistic_features = x[:, self.n_acoustics:self.n_acoustics + self.n_linguistics]
+        semantic_features = x[:, self.n_acoustics + self.n_linguistics:]
+
+        # encode each feature type
+        acoustic_emb = self.acoustics_encoder(acoustic_features)
+        linguistic_emb = self.linguistics_encoder(linguistic_features)
+        semantic_emb = self.semantics_encoder(semantic_features)
+
+        # concatenate and fuse (scale to mmse limit [0, 30])
+        input_vec = torch.cat([acoustic_emb, linguistic_emb, semantic_emb], dim=1)
+        output = self.fusion(input_vec)
+        output_scaled = torch.sigmoid(output) * 30
+
+        return output_scaled
 
 # feature scaling
 scaler = StandardScaler()
@@ -33,7 +75,11 @@ scaler_fitted = False
 # initialize model, loss, optimizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-regressor = MMSERegression().to(device)
+regressor = MMSERegression(
+    n_acoustics=42,
+    n_linguistics=15,
+    n_semantics=18
+).to(device)
 criterion = nn.L1Loss()
 optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)
 
@@ -78,7 +124,7 @@ def train_step(x, y):
     y = y.to(device)
 
     optimizer.zero_grad()
-    pred = regressor(x) * MMSE_LIMIT
+    pred = regressor(x)
     loss = criterion(pred, y)
     loss.backward()
     optimizer.step()
@@ -111,7 +157,7 @@ def test(loader):
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
 
-            pred = regressor(batch_x) * MMSE_LIMIT
+            pred = regressor(batch_x)
             loss = criterion(pred, batch_y)
 
             total_loss += loss.item()
