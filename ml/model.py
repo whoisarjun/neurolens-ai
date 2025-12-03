@@ -52,7 +52,7 @@ class MMSERegression(nn.Module):
         )
 
     def forward(self, x):
-        acoustic_features = x[:, self.n_acoustics]
+        acoustic_features = x[:, :self.n_acoustics]
         linguistic_features = x[:, self.n_acoustics:self.n_acoustics + self.n_linguistics]
         semantic_features = x[:, self.n_acoustics + self.n_linguistics:]
 
@@ -77,7 +77,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 regressor = MMSERegression(
     n_acoustics=52,
-    n_linguistics=15,
+    n_linguistics=29,
     n_semantics=18
 ).to(device)
 criterion = nn.HuberLoss(delta=2.0)

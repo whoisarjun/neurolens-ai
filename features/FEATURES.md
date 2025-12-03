@@ -2,7 +2,7 @@
 
 This document lists **all feature types** extracted by this stage of the Neurolens pipeline:  
 - 52 acoustic features (`acoustics.py`)  
-- 15 linguistic features (`linguistics.py`)  
+- 29 linguistic features (`linguistics.py`)  
 - 18 LLM-derived semantic scores (`semantics.py`)
 ---
 
@@ -65,25 +65,39 @@ This document lists **all feature types** extracted by this stage of the Neurole
 
 ---
 
-## ✍️ Linguistic Features (15)
+## ✍️ Linguistic Features (29)
 
-| #  | Category                 | Feature Name             | Description                                  |
-|----|--------------------------|--------------------------|----------------------------------------------|
-| 1  | Basic Text Stats         | Total tokens             | Total number of tokens in transcript         |
-| 2  | Basic Text Stats         | Unique tokens            | Number of unique vocabulary items            |
-| 3  | Basic Text Stats         | Type–token ratio         | unique / total tokens                        |
-| 4  | Basic Text Stats         | Mean words per utterance | Avg. words per Whisper segment               |
-| 5  | Basic Text Stats         | Max utterance length     | Longest utterance in words                   |
-| 6  | Basic Text Stats         | Number of sentences      | Approx. sentence count                       |
-| 7  | Lexical Richness         | Content-word ratio       | (nouns + verbs + adj + adv) / total          |
-| 8  | Lexical Richness         | Function-word ratio      | function words / total                       |
-| 9  | Lexical Richness         | Rare-word ratio          | rare words / total                           |
-| 10 | Repetition & Disfluency  | Filler-word count        | Count of {"um","uh","like","you know","er"}  |
-| 11 | Repetition & Disfluency  | Repetition score         | Weighted count of repeated words/phrases     |
-| 12 | Repetition & Disfluency  | Bigram repetition ratio  | repeated bigrams / total bigrams             |
-| 13 | Repetition & Disfluency  | Self-correction count    | Count of {"sorry","I mean","no wait"}        |
-| 14 | Semantic Coherence       | Mean local coherence     | Mean cosine similarity between segments      |
-| 15 | Semantic Coherence       | Coherence variance       | Variance of consecutive-segment similarities |
+| #  | Category                | Feature Name             | Description                                  |
+|----|-------------------------|--------------------------|----------------------------------------------|
+| 1  | Basic Text Stats        | Total tokens             | Total number of tokens in transcript         |
+| 2  | Basic Text Stats        | Unique tokens            | Number of unique vocabulary items            |
+| 3  | Basic Text Stats        | Type–token ratio         | unique / total tokens                        |
+| 4  | Basic Text Stats        | Mean words per utterance | Avg. words per Whisper segment               |
+| 5  | Basic Text Stats        | Max utterance length     | Longest utterance in words                   |
+| 6  | Basic Text Stats        | Number of sentences      | Approx. sentence count                       |
+| 7  | Lexical Richness        | Content-word ratio       | (nouns + verbs + adj + adv) / total          |
+| 8  | Lexical Richness        | Function-word ratio      | function words / total                       |
+| 9  | Lexical Richness        | Rare-word ratio          | rare words / total                           |
+| 10 | Repetition & Disfluency | Filler-word count        | Count of {"um","uh","like","you know","er"}  |
+| 11 | Repetition & Disfluency | Repetition score         | Weighted count of repeated words/phrases     |
+| 12 | Repetition & Disfluency | Bigram repetition ratio  | repeated bigrams / total bigrams             |
+| 13 | Repetition & Disfluency | Self-correction count    | Count of {"sorry","I mean","no wait"}        |
+| 14 | Semantic Coherence      | Mean local coherence     | Mean cosine similarity between segments      |
+| 15 | Semantic Coherence      | Coherence variance       | Variance of consecutive-segment similarities |
+| 16 | Syntactic Complexity    | Mean dependency distance | Average word separation in grammar links     |
+| 17 | Syntactic Complexity    | Clause density | Number of clauses per sentence               |
+| 18 | Syntactic Complexity    | Mean parse tree height | Average sentence structure complexity        |
+| 19 | Parts-of-speech ratios  | Pronoun ratio | How often pronouns are used vs other words   |
+| 20 | Parts-of-speech ratios  | Verb-to-noun ratio | Balance of verbs vs nouns                    |
+| 21 | Parts-of-speech ratios  | Auxiliary verb ratio | How often helping verbs are used |
+| 22 | Semantic content        | Idea density | Density of ideas expressed per word |
+| 23 | Semantic content | Mean concreteness | How concrete vs abstract words are |
+| 24 | Semantic content | Abstract ratio | Proportion of abstract concept words |
+| 25 | Vocabulary sophistication | Flesch-Kincaid grade | Text difficulty/grade level score |
+| 26 | Vocabulary sophistication | Mean syllables | Average syllables per word used |
+| 27 | Vocabulary sophistication | Long word ratio | Proportion of longer complex words |
+| 28 | Discourse coherence | Global coherence drift | How much speaker drifts from initial topic |
+| 29 | Discourse coherence | Topic recurrence | How often main topics are revisited |
 
 ---
 
