@@ -80,7 +80,7 @@ regressor = MMSERegression(
     n_linguistics=15,
     n_semantics=18
 ).to(device)
-criterion = nn.L1Loss()
+criterion = nn.HuberLoss(delta=2.0)
 optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)
 
 # ========== FEATURE SCALING ========== #
