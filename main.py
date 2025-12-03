@@ -8,7 +8,7 @@ torch.backends.cudnn.enabled = False
 torch.backends.cudnn.benchmark = False
 
 from processing import cleanup, transcriber
-from features import acoustics, linguistics, llm_scores
+from features import acoustics, linguistics, semantics
 from ml import model
 
 TRAIN_JSON = Path('data_jsons/train.json')
@@ -44,13 +44,13 @@ def process_single_item(item):
         # 3) extract features
         acoustic_features = acoustics.extract(output_path, transcript, verbose=False)
         linguistic_features = linguistics.extract(transcript, verbose=False)
-        llm_feature_vec = llm_scores.extract(question, transcript, verbose=False)
+        semantic_features = semantics.extract(question, transcript, verbose=False)
 
         # 4) form input vector (shape: (75,))
         input_vector = np.concatenate([
             acoustic_features,
             linguistic_features,
-            llm_feature_vec
+            semantic_features
         ])
 
         return input_vector, float(item['mmse']), None
@@ -61,9 +61,6 @@ def process_single_item(item):
 
 # Sequential processing (for debugging)
 def process_split_sequential(split_data):
-    """
-    Original sequential processing (for debugging or if parallel fails).
-    """
     X = []
     y = []
 

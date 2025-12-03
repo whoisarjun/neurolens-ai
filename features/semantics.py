@@ -10,7 +10,7 @@ from ollama import chat
 from pathlib import Path
 from ollama import ChatResponse
 
-CACHE_DIR = Path('cache/llm_scores')
+CACHE_DIR = Path('cache/semantics')
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL = 'qwen2.5:7b'

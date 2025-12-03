@@ -3,10 +3,8 @@
 This document lists **all feature types** extracted by this stage of the Neurolens pipeline:  
 - Acoustic features (`acoustics.py`)  
 - Linguistic features (`linguistics.py`)  
-- LLM-derived cognitive reasoning scores (`llm_scores.py`)  
-
-Only the **acoustic section** is filled for now — the other sections are placeholders you will populate later.
-
+- LLM-derived semantic scores (`semantics.py`)
+- 
 ---
 
 ## 🎧 Acoustic Features (42)
@@ -80,7 +78,7 @@ Only the **acoustic section** is filled for now — the other sections are place
 
 ---
 
-## 🧠 LLM Cognitive Reasoning Scores (18)
+## 🧠 LLM Semantic Scores (18)
 
 | #  | Category                         | Feature Name                         | Description                                                           |
 |----|----------------------------------|--------------------------------------|-----------------------------------------------------------------------|
