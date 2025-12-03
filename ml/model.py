@@ -76,7 +76,7 @@ scaler_fitted = False
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 regressor = MMSERegression(
-    n_acoustics=42,
+    n_acoustics=52,
     n_linguistics=15,
     n_semantics=18
 ).to(device)
@@ -107,7 +107,7 @@ def load_scaler(fp: Path):
 # ========== DATALOADER ========== #
 
 # creates a dataloader from inputs
-# X: [N, 75], y: [N]
+# X: [N, #], y: [N]
 def create_dataloader(X, y, batch_size=32, shuffle=True):
     X = torch.tensor(X, dtype=torch.float32)
     y = torch.tensor(y, dtype=torch.float32).unsqueeze(1)

@@ -1,57 +1,67 @@
 # Neurolens AI Feature Inventory
 
 This document lists **all feature types** extracted by this stage of the Neurolens pipeline:  
-- 42 acoustic features (`acoustics.py`)  
+- 52 acoustic features (`acoustics.py`)  
 - 15 linguistic features (`linguistics.py`)  
 - 18 LLM-derived semantic scores (`semantics.py`)
 ---
 
-## 🎧 Acoustic Features (42)
+## 🎧 Acoustic Features (52)
 
-| #  | Category              | Feature Name                 | Description                   |
-|----|-----------------------|------------------------------|-------------------------------|
-| 1  | Pitch                 | Mean F0                      | Average fundamental frequency |
-| 2  | Pitch                 | STD F0                       | Variability of pitch          |
-| 3  | Pitch                 | Min F0                       | Lowest detected pitch         |
-| 4  | Pitch                 | Max F0                       | Highest detected pitch        |
-| 5  | Energy                | Mean energy                  | Average loudness              |
-| 6  | Energy                | STD energy                   | Variability in loudness       |
-| 7  | Energy                | Dynamic range                | Max energy − Min energy       |
-| 8  | Speaking Rate         | Syllables/sec                | Estimated speech speed        |
-| 9  | Speaking Rate         | Words/sec                    | Transcript-aligned speed      |
-| 10 | Pauses                | # pauses > X ms              | Count of long pauses          |
-| 11 | Pauses                | Total pause duration         | Sum of all pauses             |
-| 12 | Pauses                | Pause ratio                  | pause_time / total_time       |
-| 13 | MFCCs (1–13)          | MFCC1 mean                   | Mean of coefficient 1         |
-| 14 | MFCCs (1–13)          | MFCC1 std                    | Std of coefficient 1          |
-| 15 | MFCCs (1–13)          | MFCC2 mean                   | Mean of coefficient 2         |
-| 16 | MFCCs (1–13)          | MFCC2 std                    | Std of coefficient 2          |
-| 17 | MFCCs (1–13)          | MFCC3 mean                   | Mean of coefficient 3         |
-| 18 | MFCCs (1–13)          | MFCC3 std                    | Std of coefficient 3          |
-| 19 | MFCCs (1–13)          | MFCC4 mean                   | Mean of coefficient 4         |
-| 20 | MFCCs (1–13)          | MFCC4 std                    | Std of coefficient 4          |
-| 21 | MFCCs (1–13)          | MFCC5 mean                   | Mean of coefficient 5         |
-| 22 | MFCCs (1–13)          | MFCC5 std                    | Std of coefficient 5          |
-| 23 | MFCCs (1–13)          | MFCC6 mean                   | Mean of coefficient 6         |
-| 24 | MFCCs (1–13)          | MFCC6 std                    | Std of coefficient 6          |
-| 25 | MFCCs (1–13)          | MFCC7 mean                   | Mean of coefficient 7         |
-| 26 | MFCCs (1–13)          | MFCC7 std                    | Std of coefficient 7          |
-| 27 | MFCCs (1–13)          | MFCC8 mean                   | Mean of coefficient 8         |
-| 28 | MFCCs (1–13)          | MFCC8 std                    | Std of coefficient 8          |
-| 29 | MFCCs (1–13)          | MFCC9 mean                   | Mean of coefficient 9         |
-| 30 | MFCCs (1–13)          | MFCC9 std                    | Std of coefficient 9          |
-| 31 | MFCCs (1–13)          | MFCC10 mean                  | Mean of coefficient 10        |
-| 32 | MFCCs (1–13)          | MFCC10 std                   | Std of coefficient 10         |
-| 33 | MFCCs (1–13)          | MFCC11 mean                  | Mean of coefficient 11        |
-| 34 | MFCCs (1–13)          | MFCC11 std                   | Std of coefficient 11         |
-| 35 | MFCCs (1–13)          | MFCC12 mean                  | Mean of coefficient 12        |
-| 36 | MFCCs (1–13)          | MFCC12 std                   | Std of coefficient 12         |
-| 37 | MFCCs (1–13)          | MFCC13 mean                  | Mean of coefficient 13        |
-| 38 | MFCCs (1–13)          | MFCC13 std                   | Std of coefficient 13         |
-| 39 | Spectral Centroid     | Mean spectral centroid       | Brightness of sound           |
-| 40 | Spectral Centroid     | STD spectral centroid        | Variability in brightness     |
-| 41 | Spectral Bandwidth    | Mean spectral bandwidth      | Spread of frequencies         |
-| 42 | Spectral Bandwidth    | STD spectral bandwidth       | Variability in spread         |
+| #  | Category           | Feature Name             | Description                                     |
+|----|--------------------|--------------------------|-------------------------------------------------|
+| 1  | Pitch              | Mean F0                  | Average fundamental frequency                   |
+| 2  | Pitch              | STD F0                   | Variability of pitch                            |
+| 3  | Pitch              | Min F0                   | Lowest detected pitch                           |
+| 4  | Pitch              | Max F0                   | Highest detected pitch                          |
+| 5  | Pitch              | F0 IQR                   | Interquartile range of pitch                    |
+| 6  | Energy             | Mean energy              | Average loudness                                |
+| 7  | Energy             | STD energy               | Variability in loudness                         |
+| 8  | Energy             | Dynamic range            | Max energy − Min energy                         |
+| 9  | Speaking Rate      | Syllables/sec            | Estimated speech speed                          |
+| 10 | Speaking Rate      | Words/sec                | Transcript-aligned speed                        |
+| 11 | Pauses             | # pauses > X ms          | Count of long pauses                            |
+| 12 | Pauses             | Total pause duration     | Sum of all pauses                               |
+| 13 | Pauses             | Pause ratio              | pause_time / total_time                         |
+| 14 | MFCCs (1–13)       | MFCC1 mean               | Mean of coefficient 1                           |
+| 15 | MFCCs (1–13)       | MFCC1 std                | Std of coefficient 1                            |
+| 16 | MFCCs (1–13)       | MFCC2 mean               | Mean of coefficient 2                           |
+| 17 | MFCCs (1–13)       | MFCC2 std                | Std of coefficient 2                            |
+| 18 | MFCCs (1–13)       | MFCC3 mean               | Mean of coefficient 3                           |
+| 19 | MFCCs (1–13)       | MFCC3 std                | Std of coefficient 3                            |
+| 20 | MFCCs (1–13)       | MFCC4 mean               | Mean of coefficient 4                           |
+| 21 | MFCCs (1–13)       | MFCC4 std                | Std of coefficient 4                            |
+| 22 | MFCCs (1–13)       | MFCC5 mean               | Mean of coefficient 5                           |
+| 23 | MFCCs (1–13)       | MFCC5 std                | Std of coefficient 5                            |
+| 24 | MFCCs (1–13)       | MFCC6 mean               | Mean of coefficient 6                           |
+| 25 | MFCCs (1–13)       | MFCC6 std                | Std of coefficient 6                            |
+| 26 | MFCCs (1–13)       | MFCC7 mean               | Mean of coefficient 7                           |
+| 27 | MFCCs (1–13)       | MFCC7 std                | Std of coefficient 7                            |
+| 28 | MFCCs (1–13)       | MFCC8 mean               | Mean of coefficient 8                           |
+| 29 | MFCCs (1–13)       | MFCC8 std                | Std of coefficient 8                            |
+| 30 | MFCCs (1–13)       | MFCC9 mean               | Mean of coefficient 9                           |
+| 31 | MFCCs (1–13)       | MFCC9 std                | Std of coefficient 9                            |
+| 32 | MFCCs (1–13)       | MFCC10 mean              | Mean of coefficient 10                          |
+| 33 | MFCCs (1–13)       | MFCC10 std               | Std of coefficient 10                           |
+| 34 | MFCCs (1–13)       | MFCC11 mean              | Mean of coefficient 11                          |
+| 35 | MFCCs (1–13)       | MFCC11 std               | Std of coefficient 11                           |
+| 36 | MFCCs (1–13)       | MFCC12 mean              | Mean of coefficient 12                          |
+| 37 | MFCCs (1–13)       | MFCC12 std               | Std of coefficient 12                           |
+| 38 | MFCCs (1–13)       | MFCC13 mean              | Mean of coefficient 13                          |
+| 39 | MFCCs (1–13)       | MFCC13 std               | Std of coefficient 13                           |
+| 40 | Spectral Centroid  | Spectral centroid mean   | Brightness of sound                             |
+| 41 | Spectral Centroid  | Spectral centroid STD    | Variability in brightness                       |
+| 42 | Spectral Bandwidth | Spectral bandwidth mean  | Spread of frequencies                           |
+| 43 | Spectral Bandwidth | Spectral bandwidth STD   | Variability in spread                           |
+| 44 | Spectral Flux      | Spectral flux mean       | Average frame-to-frame change in spectral shape |
+| 45 | Spectral Flux      | Spectral flux STD        | Variability of spectral change across frames    |
+| 46 | Spectral Slope     | Spectral slope           | Balance of low vs high frequencies              |
+| 47 | Voice Quality      | Jitter                   | Cycle-to-cycle frequency instability of voice   |
+| 48 | Voice Quality      | Shimmer                  | Cycle-to-cycle amplitude instability of voice   |
+| 49 | Voice Quality      | Harmonics-to-noise ratio | Clarity vs breathiness                          |
+| 50 | Voice Quality      | Cepstral peak prominence | Robustness of voiced periodicity                |
+| 51 | Voice Quality      | Zero-crossing rate mean  | Articulation/noise activity level               |
+| 52 | Voice Quality      | Zero-crossing rate STD   | Variability in zero-crossing rate over time     |
 
 ---
 

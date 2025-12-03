@@ -3,12 +3,14 @@
 import re
 import librosa
 import webrtcvad
+import parselmouth
 import numpy as np
 import soundfile as sf
 from pathlib import Path
 from scipy.signal import medfilt
+from parselmouth.praat import call
 
-# vad = voice activity detection
+# vad (voice activity detection)
 def _vad(y: np.ndarray, sr: int):
     # normalize everything to max int
     peak = np.max(np.abs(y)) if y.size > 0 else 0.0
@@ -63,9 +65,17 @@ def _vad(y: np.ndarray, sr: int):
 
     return y_vad, sr, len(y_vad) / sr, pause_count
 
+# sound and point process (glottal pulses)
+def _parselmouth_args(y, sr):
+    snd = parselmouth.Sound(y, sampling_frequency=sr)
+    pitch_min, pitch_max = 75, 500  # reasonable mix/max human speech pitch range
+    point_process = call(snd, "To PointProcess (periodic, cc)", pitch_min, pitch_max)  # get glottal pulses
+
+    return snd, point_process
+
 # ========== FEATURE EXTRACTION ========== #
 
-# Features 1-4, 10: F0 (Pitch), Pause count
+# Features 1-5, 11: F0 (Pitch), Pause count
 def _f0(fn: Path):
     # load audio
     y, sr = librosa.load(str(fn), sr=16000, mono=True)
@@ -96,9 +106,15 @@ def _f0(fn: Path):
         min_f0 = float(np.min(voiced_f0))
         max_f0 = float(np.max(voiced_f0))
 
-    return mean_f0, std_f0, min_f0, max_f0, duration, vad_duration, pause_count, y, sr
+    if len(voiced_f0) > 0:
+        q25, q75 = np.percentile(voiced_f0, [25, 75])
+        f0_iqr = float(q75 - q25)
+    else:
+        f0_iqr = 0.0
 
-# Features 5-7: Energy
+    return mean_f0, std_f0, min_f0, max_f0, f0_iqr, duration, vad_duration, pause_count, y, sr
+
+# Features 6-8: Energy
 def _energy(fn: Path):
     # load audio
     y, sr = librosa.load(str(fn), sr=16000, mono=True)
@@ -119,7 +135,7 @@ def _energy(fn: Path):
 
     return mean_energy, std_energy, dynamic_range
 
-# Features 8-9: Speed
+# Features 9-10: Speed
 def _speed(transcript: dict, duration: float):
     def _count_syllables(word: str):
         word = word.lower()
@@ -142,13 +158,13 @@ def _speed(transcript: dict, duration: float):
 
     return words_ps, syllables_ps
 
-# Features 11-12: Pauses
+# Features 12-13: Pauses
 def _pauses(duration: float, vad_duration: float):
     total_pause = duration - vad_duration
     pause_ratio = total_pause / duration
     return total_pause, pause_ratio
 
-# Features 13-38: MFCCs
+# Features 14-39: MFCCs
 def _mfccs(y, sr):
     mfcc = librosa.feature.mfcc(
         y=y,
@@ -167,14 +183,39 @@ def _mfccs(y, sr):
 
     return mfcc_features
 
-# Features 39-42: Spectral features
+# Features 40-46: Spectral features
 def _spectral(y, sr):
     S = np.abs(librosa.stft(y))
 
     centroid = librosa.feature.spectral_centroid(S=S)[0]
     bandwidth = librosa.feature.spectral_bandwidth(S=S)[0]
 
-    return float(np.mean(centroid)), float(np.std(centroid)), float(np.mean(bandwidth)), float(np.std(bandwidth))
+    flux = librosa.onset.onset_strength(y=y, sr=sr)
+    flux_mean = float(flux.mean())
+    flux_std = float(flux.std())
+
+    spec = S.mean(axis=1)
+    freqs = np.arange(len(spec))
+    spectral_slope = float(np.polyfit(freqs, spec, 1)[0])
+
+    return float(np.mean(centroid)), float(np.std(centroid)), float(np.mean(bandwidth)), float(np.std(bandwidth)), flux_mean, flux_std, spectral_slope
+
+# Features 47-52: Voice quality
+def _voice_quality(y, sr):
+    snd, pp = _parselmouth_args(y, sr)
+
+    jitter = call(pp, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
+    shimmer = call([snd, pp], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6)
+
+    harmonicity = call(snd, "To Harmonicity (cc)", 0.01, 75, 0.1, 1.5)
+    hnr_mean = call(harmonicity, "Get mean", 0, 0)
+    cpp = call(harmonicity, 'Get CPPS', 0, 0)
+
+    zcr = librosa.feature.zero_crossing_rate(y)[0]
+    zcr_mean = float(zcr.mean())
+    zcr_std = float(zcr.std())
+
+    return jitter, shimmer, hnr_mean, cpp, zcr_mean, zcr_std
 
 # ========== COMBINE EVERYTHING ========== #
 
@@ -182,16 +223,17 @@ def extract(fn: Path, transcript: dict, verbose=False):
     if verbose:
         print('[ACOU] Extracting acoustic features')
 
-    mean_f0, std_f0, min_f0, max_f0, duration, vad_duration, pause_count, vad_y, vad_sr = _f0(fn)
+    mean_f0, std_f0, min_f0, max_f0, f0_iqr, duration, vad_duration, pause_count, vad_y, vad_sr = _f0(fn)
     mean_energy, std_energy, energy_range = _energy(fn)
     words_ps, syllables_ps = _speed(transcript, vad_duration)
     total_pauses, pause_ratio = _pauses(duration, vad_duration)
     mfccs = _mfccs(vad_y, vad_sr)
-    spectral_centroid_mean, spectral_centroid_std, spectral_bandwidth_mean, spectral_bandwidth_std = _spectral(vad_y, vad_sr)
+    spectral_centroid_mean, spectral_centroid_std, spectral_bandwidth_mean, spectral_bandwidth_std, spectral_flux_mean, spectral_flux_std, spectral_slope = _spectral(vad_y, vad_sr)
+    jitter, shimmer, hnr, cpp, zcr_mean, zcr_std = _voice_quality(vad_y, vad_sr)
 
     ACOUSTIC_FEATURES = np.array([
-        # F0/Pitch (4)
-        mean_f0, std_f0, min_f0, max_f0,
+        # F0/Pitch (5)
+        mean_f0, std_f0, min_f0, max_f0, f0_iqr,
 
         # Energy (3)
         mean_energy, std_energy, energy_range,
@@ -205,9 +247,15 @@ def extract(fn: Path, transcript: dict, verbose=False):
         # MFCC means and stds (26)
         *mfccs,
 
-        # Spectral (4)
+        # Spectral (7)
         spectral_centroid_mean, spectral_centroid_std,
-        spectral_bandwidth_mean, spectral_bandwidth_std
+        spectral_bandwidth_mean, spectral_bandwidth_std,
+        spectral_flux_mean, spectral_flux_std,
+        spectral_slope,
+
+        # Voice quality (6)
+        jitter, shimmer, hnr, cpp,
+        zcr_mean, zcr_std
     ])
 
     if verbose:

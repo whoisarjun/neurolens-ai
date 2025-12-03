@@ -14,5 +14,8 @@ whisperx~=3.7.4
 faster-whisper~=1.2.1
 ollama~=0.6.1
 hf_transfer
-openai-whisper
+openai-whisper~=20250625
 silero
+joblib~=1.5.2
+scikit-learn~=1.7.2
+tqdm~=4.67.1
