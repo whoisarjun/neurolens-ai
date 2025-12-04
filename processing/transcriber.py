@@ -15,7 +15,7 @@ warnings.filterwarnings(
 )
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-compute_type = "float32"
+compute_type = "float16"
 faster_whisper_model = 'nyrahealth/faster_CrisperWhisper'
 
 print('[ASR] Loading whisper model')

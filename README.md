@@ -100,8 +100,8 @@ model.load('test/model_weights.pth')
 model.load_scaler('test/model_scaler.pkl')
 ```
 ---
-### Todo:
-- ✅ constrain mmse predictions to [0, 30] using sigmoid
-- improve transcription
-- find more training data
-- add more relevant features
+Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014).
+Concreteness ratings for 40 thousand generally known English word lemmas.
+Behavior Research Methods, 46(3), 904–911.
+
+file: `features/concreteness.csv`

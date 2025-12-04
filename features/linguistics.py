@@ -1,12 +1,16 @@
 # Extraction of linguistic features
 
 import re
+import csv
 import spacy
+import textstat
 import numpy as np
+from pathlib import Path
 from numpy.linalg import norm
 from collections import Counter
 from wordfreq import zipf_frequency
 from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 nlp = spacy.load('en_core_web_sm')
 transformer = SentenceTransformer('all-mpnet-base-v2')
@@ -14,6 +18,27 @@ transformer = SentenceTransformer('all-mpnet-base-v2')
 def _split_sentences(text: str):
     doc = nlp(text)
     return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+
+def _load_concreteness_lexicon():
+    path = Path(__file__).with_name('concreteness.csv')
+    concreteness = {}
+
+    with path.open('r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            word = row['Word'].strip().lower()
+            score_str = row['Conc']
+            if not score_str:
+                continue
+            try:
+                score = float(score_str)
+            except ValueError:
+                continue
+            concreteness[word] = score
+
+    return concreteness
+
+CONCRETENESS_MAP = _load_concreteness_lexicon()
 
 # ========== FEATURE EXTRACTION ========== #
 
@@ -155,6 +180,186 @@ def _semantic_coherence(transcript: dict):
 
     return semantic_coherence_mean, semantic_coherence_variance
 
+# Features 16-18: Syntactic complexity
+def _syntactic_complexity(transcript: dict):
+    doc = nlp(transcript.get('text', ''))
+
+    # mean dependency distance
+    dependency_distances = []
+    for sent in doc.sents:
+        for token in sent:
+            if token.head != token:
+                distance = abs(token.i - token.head.i)
+                dependency_distances.append(distance)
+    mean_dependency_distance = float(np.mean(dependency_distances)) if dependency_distances else 0.0
+
+    # clause density
+    clause_count = 0
+    sentence_count = 0
+    for sent in doc.sents:
+        sentence_count += 1
+        clause_count += 1  # Main clause
+        for token in sent:
+            if token.dep_ in ['ccomp', 'xcomp', 'advcl', 'acl', 'relcl']:
+                clause_count += 1
+    clause_density = clause_count / sentence_count if sentence_count > 0 else 0.0
+
+    # mean parse tree height
+    def get_tree_height(token):
+        if not list(token.children):
+            return 1
+        return 1 + max(get_tree_height(child) for child in token.children)
+
+    tree_heights = [get_tree_height(sent.root) for sent in doc.sents]
+    mean_parse_tree_height = float(np.mean(tree_heights)) if tree_heights else 0.0
+
+    return mean_dependency_distance, clause_density, mean_parse_tree_height
+
+# Features 19-21: Parts-of-speech ratios
+def _pos_ratios(transcript: dict):
+    doc = nlp(transcript.get('text', ''))
+
+    total_words = 0
+    pronoun_count = 0
+    noun_count = 0
+    verb_count = 0
+    aux_verb_count = 0
+
+    for token in doc:
+        if token.is_alpha:
+            total_words += 1
+            if token.pos_ == 'PRON':
+                pronoun_count += 1
+            elif token.pos_ in ['NOUN', 'PROPN']:
+                noun_count += 1
+            elif token.pos_ == 'VERB':
+                verb_count += 1
+            elif token.pos_ == 'AUX':
+                aux_verb_count += 1
+
+    pronoun_ratio = pronoun_count / total_words if total_words else 0.0
+    verb_to_noun_ratio = verb_count / noun_count if noun_count else 0.0
+    auxiliary_verb_ratio = aux_verb_count / total_words if total_words else 0.0
+
+    return pronoun_ratio, verb_to_noun_ratio, auxiliary_verb_ratio
+
+# Features 22-24: Semantic content
+def _semantic_content(transcript: dict):
+    doc = nlp(transcript.get('text', ''))
+
+    # idea density (count propositions)
+    proposition_count = 0
+    word_count = 0
+
+    for token in doc:
+        if token.is_alpha:
+            word_count += 1
+            if token.pos_ in ['VERB', 'ADJ', 'ADV', 'ADP', 'CCONJ', 'SCONJ']:
+                proposition_count += 1
+
+    idea_density = proposition_count / word_count if word_count else 0.0
+
+    # mean concreteness score
+    concreteness_scores = []
+    for token in doc:
+        if token.is_alpha and token.pos_ in ['NOUN', 'PROPN', 'VERB', 'ADJ']:
+            lemma = token.lemma_.lower()
+            score = CONCRETENESS_MAP.get(lemma)
+            if score is not None:
+                concreteness_scores.append(score)
+
+    mean_concreteness = float(np.mean(concreteness_scores)) if concreteness_scores else 0.0
+
+    # abstract word ratio
+    def is_abstract(lemma: str, threshold: float = 2.0) -> bool:
+        score = CONCRETENESS_MAP.get(lemma)
+        if score is None:
+            return False
+        return score < threshold
+
+    abstract_count = sum(
+        1 for token in doc
+        if token.is_alpha and is_abstract(token.lemma_.lower())
+    )
+
+    abstract_ratio = abstract_count / word_count if word_count > 0 else 0.0
+
+    return idea_density, mean_concreteness, abstract_ratio
+
+# Features 25-27: Vocabulary sophistication
+def _vocabulary_sophistication(transcript: dict):
+    text = transcript.get('text', '')
+
+    # flesch-kincaid grade level
+    fk_grade = textstat.flesch_kincaid_grade(text) if text else 0.0
+
+    # mean syllables per word
+    words = re.findall(r'\b\w+\b', text)
+    syllable_counts = [textstat.syllable_count(word) for word in words]
+    mean_syllables = float(np.mean(syllable_counts)) if syllable_counts else 0.0
+
+    # long word ratio
+    long_words = sum(1 for word in words if len(word) > 6)
+    long_word_ratio = long_words / len(words) if words else 0.0
+
+    return fk_grade, mean_syllables, long_word_ratio
+
+# Features 28-29: Discourse coherence
+def _discourse_coherence(transcript: dict):
+    text = transcript.get('text', '')
+    sentences = _split_sentences(text)
+
+    if len(sentences) < 3:
+        return 0.0, 0.0
+
+    embeddings = transformer.encode(sentences)
+
+    # global coherence drift
+    # compare first sentence to all others
+    first_embedding = embeddings[0]
+    similarities_to_first = []
+
+    for i in range(1, len(embeddings)):
+        sim = np.dot(first_embedding, embeddings[i]) / (norm(first_embedding) * norm(embeddings[i]))
+        similarities_to_first.append(sim)
+
+    # decline in similarity over time
+    if len(similarities_to_first) > 1:
+        # use linear regression slope as drift measure
+        x = np.arange(len(similarities_to_first))
+        slope = np.polyfit(x, similarities_to_first, 1)[0]
+        global_coherence_drift = float(-slope)
+    else:
+        global_coherence_drift = 0.0
+
+    # topic recurrence score
+    # tf-idf to find main topics and count recurrence
+    if len(sentences) >= 2:
+        vectorizer = TfidfVectorizer(max_features=10, stop_words='english')
+        try:
+            tfidf_matrix = vectorizer.fit_transform(sentences)
+            # how many sentences share the same topic
+            feature_names = vectorizer.get_feature_names_out()
+
+            # top topic per sentence
+            topic_counts = Counter()
+            for i in range(tfidf_matrix.shape[0]):
+                row = tfidf_matrix[i].toarray()[0]
+                if row.max() > 0:
+                    top_topic_idx = row.argmax()
+                    topic_counts[feature_names[top_topic_idx]] += 1
+
+            # how often topics repeat
+            total_occurrences = sum(topic_counts.values())
+            recurrences = sum(count - 1 for count in topic_counts.values() if count > 1)
+            topic_recurrence = recurrences / total_occurrences if total_occurrences else 0.0
+        except:
+            topic_recurrence = 0.0
+    else:
+        topic_recurrence = 0.0
+
+    return global_coherence_drift, topic_recurrence
+
 # ========== COMBINE EVERYTHING ========== #
 
 def extract(transcript: dict, verbose=False):
@@ -165,6 +370,11 @@ def extract(transcript: dict, verbose=False):
     content_words_ratio, function_words_ratio, rare_words_ratio = _lexical_richness(transcript)
     filler_count, repetition_score, bigram_repetition_ratio, self_correction_count = _repetition_disfluency(transcript)
     semantic_coherence_mean, semantic_coherence_variance = _semantic_coherence(transcript)
+    mean_dependency_distance, clause_density, mean_parse_tree_height = _syntactic_complexity(transcript)
+    pronoun_ratio, verb_to_noun_ratio, auxiliary_verb_ratio = _pos_ratios(transcript)
+    idea_density, mean_concreteness, abstract_ratio = _semantic_content(transcript)
+    fk_grade, mean_syllables, long_word_ratio = _vocabulary_sophistication(transcript)
+    global_coherence_drift, topic_recurrence = _discourse_coherence(transcript)
 
     LINGUISTIC_FEATURES = np.array([
         # Basic text stats (6)
@@ -177,7 +387,22 @@ def extract(transcript: dict, verbose=False):
         filler_count, repetition_score, bigram_repetition_ratio, self_correction_count,
 
         # Semantic coherence (2)
-        semantic_coherence_mean, semantic_coherence_variance
+        semantic_coherence_mean, semantic_coherence_variance,
+
+        # Syntactic complexity (3)
+        mean_dependency_distance, clause_density, mean_parse_tree_height,
+
+        # Parts-of-speech ratios (3)
+        pronoun_ratio, verb_to_noun_ratio, auxiliary_verb_ratio,
+
+        # Semantic content (3)
+        idea_density, mean_concreteness, abstract_ratio,
+
+        # Vocabulary sophistication (3)
+        fk_grade, mean_syllables, long_word_ratio,
+
+        # Discourse coherence (2)
+        global_coherence_drift, topic_recurrence
     ])
 
     if verbose:
