@@ -29,8 +29,32 @@ def load_split(json_path: Path):
 
     return payload['data']
 
+# extract semantic features and cache (to not recalc for augments)
+def extract_semantic_features(item):
+    try:
+        question = item['question']
+        input_path = Path(item['input'])
+        output_path = Path(item['output'])
+
+        # Ensure output dirs exist
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Cleanup and transcribe original audio
+        cleanup.normalize(input_path, output_path, verbose=False)
+        cleanup.denoise(output_path, verbose=False)
+
+        transcript = transcriber.asr(output_path, verbose=False)
+
+        # Extract semantic features (will use cache if available)
+        semantic_features = semantics.extract(question, transcript, verbose=False)
+
+        return semantic_features, None
+
+    except Exception as e:
+        return None, str(e)
+
 # process a single audio file (w augmentation)
-def process_single_item(item, augmentation_mode=0):
+def process_single_item(item, augmentation_mode=0, cached_semantic_features=None):
     try:
         question = item['question']
         input_path = Path(item['input'])
@@ -44,24 +68,18 @@ def process_single_item(item, augmentation_mode=0):
         cleanup.denoise(output_path, verbose=False)
 
         if augmentation_mode > 0:
-            # Load cleaned audio
             y, sr = librosa.load(str(output_path), sr=16000, mono=True)
 
-            # Apply augmentation
             augmenter = augmentation.DementiaAudioAugmenter(sr=16000)
             y_aug = augmenter.apply_augmentation(y, augmentation_mode)
 
-            # Save to temp location
             TEMP_AUG_DIR.mkdir(parents=True, exist_ok=True)
             temp_aug_path = TEMP_AUG_DIR / f"{output_path.stem}_aug{augmentation_mode}.wav"
             sf.write(temp_aug_path, y_aug, sr)
 
-            # Use augmented file for feature extraction
             processing_path = temp_aug_path
         else:
-            # Use original cleaned file
             processing_path = output_path
-        # ================================================
 
         # 2) transcribe (GPU-accelerated)
         transcript = transcriber.asr(processing_path, verbose=False)
@@ -69,7 +87,12 @@ def process_single_item(item, augmentation_mode=0):
         # 3) extract features
         acoustic_features = acoustics.extract(processing_path, transcript, verbose=False)
         linguistic_features = linguistics.extract(transcript, verbose=False)
-        semantic_features = semantics.extract(question, transcript, verbose=False)
+
+        # use cached sem features, if not, recompute
+        if cached_semantic_features is not None:
+            semantic_features = cached_semantic_features
+        else:
+            semantic_features = semantics.extract(question, transcript, verbose=False)
 
         # 4) form input vector
         input_vector = np.concatenate([
@@ -78,10 +101,9 @@ def process_single_item(item, augmentation_mode=0):
             semantic_features
         ])
 
-        # ============ NEW: Cleanup temp file ============
+        # clean up temp file
         if augmentation_mode > 0:
             temp_aug_path.unlink(missing_ok=True)
-        # ===============================================
 
         return input_vector, float(item['mmse']), None
 
@@ -94,13 +116,24 @@ def process_split_with_augmentation(split_data, augment=True):
     y = []
 
     if augment:
-        # Create 4x data: original + 3 augmented versions
+        # create 4x data: original + 3 augmented versions
         desc = "Processing with augmentation (4x data)"
 
         for item in tqdm(split_data, desc=desc):
-            # Process original (mode 0)
+            # 1) extract semantic features once for this item
+            semantic_features, error = extract_semantic_features(item)
+
+            if error is not None:
+                print(f"\n⚠️  error extracting semantics for {item.get('input')}: {error}")
+                continue
+
+            # 2) process original + augmented versions with cached semantics
             for aug_mode in [0, 1, 2, 3]:
-                input_vector, mmse_score, error = process_single_item(item, augmentation_mode=aug_mode)
+                input_vector, mmse_score, error = process_single_item(
+                    item,
+                    augmentation_mode=aug_mode,
+                    cached_semantic_features=semantic_features
+                )
 
                 if error is not None:
                     print(f"\n⚠️  error processing {item.get('input')} (aug_mode={aug_mode}): {error}")
@@ -112,7 +145,11 @@ def process_split_with_augmentation(split_data, augment=True):
         desc = "Processing without augmentation"
 
         for item in tqdm(split_data, desc=desc):
-            input_vector, mmse_score, error = process_single_item(item, augmentation_mode=0)
+            input_vector, mmse_score, error = process_single_item(
+                item,
+                augmentation_mode=0,
+                cached_semantic_features=None
+            )
 
             if error is not None:
                 print(f"\n⚠️  Error processing {item.get('input')}: {error}")

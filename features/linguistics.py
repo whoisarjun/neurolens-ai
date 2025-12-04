@@ -25,16 +25,22 @@ def _load_concreteness_lexicon():
 
     with path.open('r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
+
+        cols = reader.fieldnames
+        word_col = cols[0]
+        conc_col = cols[1]
+
         for row in reader:
-            word = row['Word'].strip().lower()
-            score_str = row['Conc']
-            if not score_str:
+            w = row[word_col].strip().lower()
+            s = row[conc_col].strip()
+
+            if not s:
                 continue
+
             try:
-                score = float(score_str)
+                concreteness[w] = float(s)
             except ValueError:
                 continue
-            concreteness[word] = score
 
     return concreteness
 

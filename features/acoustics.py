@@ -209,7 +209,9 @@ def _voice_quality(y, sr):
 
     harmonicity = call(snd, "To Harmonicity (cc)", 0.01, 75, 0.1, 1.5)
     hnr_mean = call(harmonicity, "Get mean", 0, 0)
-    cpp = call(harmonicity, 'Get CPPS', 0, 0)
+
+    pc = call(snd, "To PowerCepstrogram", 60, 0.002, 5000, 50)
+    cpp = call(pc, 'Get CPPS', 'no', 0.01, 0.001, 60, 330, 0.05, 'parabolic', 0.001, 0.0, 'Straight', 'Robust')
 
     zcr = librosa.feature.zero_crossing_rate(y)[0]
     zcr_mean = float(zcr.mean())
