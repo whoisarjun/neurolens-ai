@@ -8,12 +8,12 @@ class DementiaAudioAugmenter:
         self.sr = sr
 
     # apply diff augmentations (modes 0-3)
-    def apply_augmentation(self, y: np.ndarray, augmentation_mode: int) -> np.ndarray:
+    def apply_augmentation(self, y: np.ndarray , augmentation_mode: int) -> np.ndarray:
         if augmentation_mode == 0:
             return y
 
         # each mode uses different combinations to maximize diversity
-        if augmentation_mode == 1:
+        elif augmentation_mode == 1:
             y = self._time_stretch(y, rate=np.random.uniform(0.95, 1.05))
             y = self._add_room_reverb(y, room_size='small')
             y = self._add_background_noise(y, snr_db=np.random.uniform(25, 35))
@@ -30,7 +30,7 @@ class DementiaAudioAugmenter:
 
         return y
 
-    # ===== AUGMENTATIONS =====
+    # ========== AUGMENTATIONS ========== #
 
     # time stretch (0.95-1.05x)
     def _time_stretch(self, y: np.ndarray, rate: float) -> np.ndarray:
