@@ -1,5 +1,25 @@
 # How to use Neurolens AI pipeline:
 
+## 0. run these in terminal
+```bash
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+```
+on two separate windows, run:
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve
+```
+and:
+```bash
+ollama pull qwen2.5:7b
+ollama run qwen2.5:7b
+```
+on a new window, run:
+```bash
+python main.py
+```
+
 ## 1. cleanup audio
 ```python
 from pathlib import Path
@@ -41,21 +61,21 @@ result = transcriber.asr(output_file)
 ```python
 import torch
 import numpy as np
-from features import acoustics, linguistics, llm_scores
+from features import acoustics, linguistics, semantics
 
 # extract features
 acoustic_features = acoustics.extract(output_file, transcript)
 linguistic_features = linguistics.extract(transcript)
-llm_scores = llm_scores.extract(question, transcript)
+semantic_features = semantics.extract(question, transcript)
 
 # combine into input vector
 input_vector = np.concatenate([
     acoustic_features,
     linguistic_features,
-    llm_scores
+    semantic_features
 ])
 ```
-```input vector``` size: (75,)
+```input vector``` size: (99,)
 
 ## 4. load training and testing batches
 ```python

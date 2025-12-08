@@ -414,4 +414,10 @@ def extract(transcript: dict, verbose=False):
     if verbose:
         print('[LING] Done extracting')
 
-    return LINGUISTIC_FEATURES
+    # replace all nans with zeros just for training purposes
+    return np.nan_to_num(
+        LINGUISTIC_FEATURES,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0
+    )

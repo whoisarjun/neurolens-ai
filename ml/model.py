@@ -64,9 +64,9 @@ class MMSERegression(nn.Module):
         # concatenate and fuse (scale to mmse limit [0, 30])
         input_vec = torch.cat([acoustic_emb, linguistic_emb, semantic_emb], dim=1)
         output = self.fusion(input_vec)
-        output_scaled = torch.sigmoid(output) * 30
+        output_clamped = torch.clamp(output, 0, 30)
 
-        return output_scaled
+        return output_clamped
 
 # feature scaling
 scaler = StandardScaler()
@@ -80,8 +80,14 @@ regressor = MMSERegression(
     n_linguistics=29,
     n_semantics=18
 ).to(device)
-criterion = nn.HuberLoss(delta=2.0)
+criterion = nn.HuberLoss(delta=1.5)
 optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer,
+    mode='min',
+    factor=0.5,
+    patience=3
+)
 
 # ========== FEATURE SCALING ========== #
 
@@ -127,6 +133,10 @@ def train_step(x, y):
     pred = regressor(x)
     loss = criterion(pred, y)
     loss.backward()
+
+    # gradient clipping just to be safe
+    torch.nn.utils.clip_grad_norm_(regressor.parameters(), max_norm=1.0)
+
     optimizer.step()
 
     return loss.item()

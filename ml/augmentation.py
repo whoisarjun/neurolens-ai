@@ -1,6 +1,5 @@
 import librosa
 import numpy as np
-from scipy.signal import butter, sosfilt
 
 # augmentation to preserve relevant acoustic features but adding realistic variability
 class DementiaAudioAugmenter:
@@ -8,42 +7,34 @@ class DementiaAudioAugmenter:
         self.sr = sr
 
     # apply diff augmentations (modes 0-3)
-    def apply_augmentation(self, y: np.ndarray , augmentation_mode: int) -> np.ndarray:
-        if augmentation_mode == 0:
-            return y
-
+    def apply_augmentation(self, y: np.ndarray, augmentation_mode: int) -> np.ndarray:
         # each mode uses different combinations to maximize diversity
-        elif augmentation_mode == 1:
-            y = self._time_stretch(y, rate=np.random.uniform(0.95, 1.05))
-            y = self._add_room_reverb(y, room_size='small')
-            y = self._add_background_noise(y, snr_db=np.random.uniform(25, 35))
+        if augmentation_mode == 1:
+            y = self._time_stretch(y, rate=np.random.uniform(0.99, 1.01))
+            y = self._add_background_noise(y, snr_db=np.random.uniform(30, 40))
 
         elif augmentation_mode == 2:
-            y = self._pitch_shift(y, n_steps=np.random.uniform(-1.5, 1.5))
-            y = self._phone_codec_simulation(y)
-            y = self._add_background_noise(y, snr_db=np.random.uniform(20, 30))
+            y = self._add_room_reverb(y, room_size='tiny')
+            y = self._add_background_noise(y, snr_db=np.random.uniform(28, 38))
 
         elif augmentation_mode == 3:
-            y = self._time_stretch(y, rate=np.random.uniform(0.97, 1.03))
-            y = self._add_room_reverb(y, room_size='medium')
-            y = self._dynamic_range_compression(y)
+            y = self._time_stretch(y, rate=np.random.uniform(0.98, 1.02))
 
         return y
 
     # ========== AUGMENTATIONS ========== #
 
-    # time stretch (0.95-1.05x)
+    # time stretch
     def _time_stretch(self, y: np.ndarray, rate: float) -> np.ndarray:
         return librosa.effects.time_stretch(y, rate=rate)
-
-    # pitch shift (-1.5 to +1.5 semitones)
-    def _pitch_shift(self, y: np.ndarray, n_steps: float) -> np.ndarray:
-        return librosa.effects.pitch_shift(y, sr=self.sr, n_steps=n_steps)
 
     # realistic room reverberation
     def _add_room_reverb(self, y: np.ndarray, room_size: str = 'small') -> np.ndarray:
         # simple reverb w exponential decay
-        if room_size == 'small':
+        if room_size == 'tiny':
+            reverb_time = 0.05
+            mix = 0.05
+        elif room_size == 'small':
             reverb_time = 0.15
             mix = 0.15
         elif room_size == 'medium':
@@ -64,7 +55,7 @@ class DementiaAudioAugmenter:
         # mix
         return (1 - mix) * y + mix * reverb
 
-    # background pink noise (20-35 dB snr)
+    # background pink noise
     def _add_background_noise(self, y: np.ndarray, snr_db: float) -> np.ndarray:
         noise = self._generate_pink_noise(len(y))
 
@@ -98,39 +89,6 @@ class DementiaAudioAugmenter:
 
         return pink
 
-    # simulate voip codec artifacts (300-3400 Hz bandpass filter + compression)
-    def _phone_codec_simulation(self, y: np.ndarray) -> np.ndarray:
-        # bandpass filter
-        sos = butter(4, [300, 3400], btype='band', fs=self.sr, output='sos')
-        y_filtered = sosfilt(sos, y)
-
-        # quantization
-        bits = 8  # simulate 8-bit encoding
-        y_quantized = np.round(y_filtered * (2 ** (bits - 1))) / (2 ** (bits - 1))
-
-        # blend with original
-        return 0.7 * y + 0.3 * y_quantized
-
-    # simulate AGC/dynamic range compression
-    def _dynamic_range_compression(self, y: np.ndarray,
-                                   threshold: float = 0.3,
-                                   ratio: float = 3.0) -> np.ndarray:
-        # compressor
-        compressed = y.copy()
-
-        # find + compress
-        mask = np.abs(y) > threshold
-        compressed[mask] = threshold + (y[mask] - threshold) / ratio
-
-        return compressed
-
-    # 2-5% formant shifting (simulate diff vocal tract length)
-    def _formant_shift(self, y: np.ndarray, shift_factor: float = 1.02) -> np.ndarray:
-        # phase vocoder for formant preservation
-        D = librosa.stft(y)
-        D_shifted = librosa.phase_vocoder(D, rate=shift_factor)
-        return librosa.istft(D_shifted, length=len(y))
-
 # wraps dataloader to apply augs on the fly
 class AugmentedDataLoader:
     def __init__(self, original_data, augment_multiplier: int = 3):
@@ -155,7 +113,6 @@ class AugmentedDataLoader:
         for idx in range(len(self)):
             all_items.append(self.__getitem__(idx))
         return all_items
-
 
 # ===== INTEGRATION HELPERS ===== #
 

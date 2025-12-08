@@ -5,7 +5,6 @@ import json
 import pickle
 import hashlib
 import numpy as np
-from tqdm import tqdm
 from ollama import chat
 from pathlib import Path
 from ollama import ChatResponse
@@ -14,6 +13,8 @@ CACHE_DIR = Path('cache/semantics')
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL = 'qwen2.5:7b'
+
+DEFAULT_SEMANTIC_SCORE = 1.0
 
 def _ask(prompt: str):
     response: ChatResponse = chat(model=MODEL, messages=[
@@ -66,7 +67,7 @@ FEATURES:
 """
     return _ask(prompt)
 
-def _parse_scores(raw: str, features: list[dict]) -> list[int]:
+def _parse_scores(raw: str) -> list[float]:
     if "OUTPUT:" in raw:
         raw = raw.split("OUTPUT:", 1)[1].strip()
 
@@ -75,19 +76,28 @@ def _parse_scores(raw: str, features: list[dict]) -> list[int]:
 
     if not raw:
         print("LLM returned no JSON.")
-        raise ValueError("Empty JSON payload from LLM")
+        raise LLMParseError("Empty JSON payload from LLM")
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
         print("FAILED TO PARSE LLM RESPONSE.")
-        raise
+        raise LLMParseError(str(e))
 
-    return [item['score'] for item in data['scores']]
+    return [
+        float(s) if isinstance((s := item.get('score')), (int, float)) and 0 <= s <= 4
+        else DEFAULT_SEMANTIC_SCORE
+        for item in data['scores']
+    ]
 
-def _get_cache_key(question: str, transcript: str):
-    content = f"{question}||{transcript}"
-    return hashlib.md5(content.encode()).hexdigest()
+def _get_cache_key(filename: Path):
+    key = str(filename).split('DATA/')[-1]
+
+    return hashlib.md5(key.encode()).hexdigest()
+
+class LLMParseError(Exception):
+    # if the llm reponse cannot be parsed after 3 tries
+    pass
 
 # ========== FEATURE EXTRACTION ========== #
 
@@ -298,49 +308,62 @@ def _ask_features(question: str, transcript: dict, features: list[dict], verbose
         features[4:8],
         features[8:12],
         features[12:15],
-        features[15:18],
+        features[15:18]
     ]
 
     def process_section(s):
-        for attempt in range(5):
+        last_error = None
+        for attempt in range(3):
             try:
                 raw = _prompt(question, transcript.get('text', ''), s)
                 return _parse_scores(raw, s)
-            except Exception:
-                if attempt == 4:
-                    return [0 for _ in s]
-        return [0 for _ in s]
+            except LLMParseError as e:
+                # smth wrong with the transcript → no point retrying 3 times
+                last_error = e
+                break
+            except Exception as e:
+                # transient LLM/backend error → retry a few times
+                last_error = e
+                continue
 
-    # *** sequential execution — loop, no executor ***
+        if isinstance(last_error, LLMParseError):
+            # propagate up so caller can react (re-ASR, etc.)
+            raise last_error
+
+        # if it's some other persistent error, you can still fall back to 1/4
+        return default_semantic_features()
+
     results = []
     for s in sections:
         section_scores = process_section(s)
         results.append(section_scores)
 
-    # flatten
-    return [score for section_scores in results for score in section_scores]
+    return (lambda sc: sc[:len(feature_list)] + [DEFAULT_SEMANTIC_SCORE] * max(0, len(feature_list) - len(sc)))(
+        [score for section_scores in results for score in section_scores])
 
 # ========== COMBINE EVERYTHING ========== #
 
-def extract(question: str, transcript: dict, verbose=False):
-    cache_key = _get_cache_key(question, transcript.get('text', ''))
+def extract(question: str, transcript: dict, filename: Path, verbose=False):
+    cache_key = _get_cache_key(filename)
     cache_file = CACHE_DIR / f"{cache_key}.pkl"
 
-    # Check cache first
     if cache_file.exists():
         if verbose:
             print('[LLM] Loading cached scores')
         with open(cache_file, 'rb') as f:
             return pickle.load(f)
 
-    # Generate scores
     if verbose:
         print('[LLM] Producing LLM scores')
+
+    # this can now raise LLMParseError
     scores = np.array(_ask_features(question, transcript, feature_list, verbose), dtype=np.float32)
 
-    # Save to cache
     with open(cache_file, 'wb') as f:
         pickle.dump(scores, f)
 
     return scores
+
+def default_semantic_features() -> np.array:
+    return np.full(len(feature_list), DEFAULT_SEMANTIC_SCORE, dtype=np.float32)
 

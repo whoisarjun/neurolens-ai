@@ -5,7 +5,6 @@ import librosa
 import webrtcvad
 import parselmouth
 import numpy as np
-import soundfile as sf
 from pathlib import Path
 from scipy.signal import medfilt
 from parselmouth.praat import call
@@ -263,4 +262,9 @@ def extract(fn: Path, transcript: dict, verbose=False):
     if verbose:
         print('[ACOU] Done extracting')
 
-    return ACOUSTIC_FEATURES
+    return np.nan_to_num(
+        ACOUSTIC_FEATURES,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0
+    )
