@@ -1,16 +1,17 @@
 # Extraction of linguistic features
 
-import re
 import csv
+import re
+from collections import Counter
+from pathlib import Path
+
+import numpy as np
 import spacy
 import textstat
-import numpy as np
-from pathlib import Path
 from numpy.linalg import norm
-from collections import Counter
-from wordfreq import zipf_frequency
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
+from wordfreq import zipf_frequency
 
 nlp = spacy.load('en_core_web_sm')
 transformer = SentenceTransformer('all-mpnet-base-v2')

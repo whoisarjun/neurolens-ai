@@ -67,12 +67,14 @@ from features import acoustics, linguistics, semantics
 acoustic_features = acoustics.extract(output_file, transcript)
 linguistic_features = linguistics.extract(transcript)
 semantic_features = semantics.extract(question, transcript)
+embeddings = transcriber.embeddings(output_file)
 
 # combine into input vector
 input_vector = np.concatenate([
     acoustic_features,
     linguistic_features,
-    semantic_features
+    semantic_features,
+    embeddings
 ])
 ```
 ```input vector``` size: (99,)

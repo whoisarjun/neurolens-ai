@@ -1,14 +1,17 @@
 # Whisper-based ASR transcription
 
-import torch
-import librosa
-import whisper
+import hashlib
+import pickle
 import tempfile
 import warnings
+from pathlib import Path
+
+import librosa
+import torch
+import whisper
 import whisperx
 import numpy as np
 import soundfile as sf
-from pathlib import Path
 
 # Ignore this specific memory warning
 warnings.filterwarnings(
@@ -20,10 +23,19 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 compute_type = "float32"
 faster_whisper_model = 'nyrahealth/faster_CrisperWhisper'
 
+CACHE_DIR = Path('cache/embeddings')
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 print('[ASR] Loading whisper model')
 model = whisper.load_model('large-v3-turbo')
 print('[ASR] Loading crisper-whisper model')
 modelx = whisperx.load_model(faster_whisper_model, device=DEVICE, compute_type=compute_type, vad_method='silero')
+
+
+def _get_cache_key(filename: Path):
+    key = str(filename).split('DATA/')[-1]
+    return hashlib.md5(key.encode()).hexdigest()
+
 
 def normalize_audio(fp: Path):
     try:
@@ -43,6 +55,7 @@ def normalize_audio(fp: Path):
     except Exception as e:
         print(f'[WARN] Normalization failed: {e}')
         return fp
+
 
 def asr(fp: Path, verbose=False):
     if verbose:
@@ -82,6 +95,18 @@ def asr(fp: Path, verbose=False):
     }
 
 def embeddings(fp: Path, verbose=False):
+    cache_key = _get_cache_key(fp)
+    cache_file = CACHE_DIR / f"{cache_key}.pkl"
+
+    if cache_file.exists():
+        if verbose:
+            print('[ASR] Loading cached embeddings')
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+
+    if verbose:
+        print('[ASR] Computing embeddings')
+
     # load audio
     audio = whisper.load_audio(str(fp))
     audio = whisper.pad_or_trim(audio)
@@ -93,8 +118,12 @@ def embeddings(fp: Path, verbose=False):
         frames = model.encoder(mel.unsqueeze(0))  # (1, n_frames, d_state)
 
     emb = frames.mean(dim=1)
-    return emb
 
+    # Save to cache
+    with open(cache_file, 'wb') as f:
+        pickle.dump(emb, f)
+
+    return emb
 
 def sanitize_text(text: str, max_chars: int = 8000, max_repeat: int = 50) -> str:
     tokens = text.split()

@@ -1,13 +1,14 @@
 # Extraction of acoustic features
 
 import re
-import librosa
-import webrtcvad
-import parselmouth
-import numpy as np
 from pathlib import Path
-from scipy.signal import medfilt
+
+import librosa
+import numpy as np
+import parselmouth
+import webrtcvad
 from parselmouth.praat import call
+from scipy.signal import medfilt
 
 # vad (voice activity detection)
 def _vad(y: np.ndarray, sr: int):

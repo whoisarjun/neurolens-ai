@@ -1,12 +1,13 @@
 # Extraction of LLM scores
 
-import re
+import hashlib
 import json
 import pickle
-import hashlib
+import re
+from pathlib import Path
+
 import numpy as np
 from ollama import chat
-from pathlib import Path
 from ollama import ChatResponse
 
 CACHE_DIR = Path('cache/semantics')

@@ -1,11 +1,12 @@
 # Simple data processing
 
-import librosa
-import soundfile as sf
-import noisereduce as nr
 from pathlib import Path
-from scipy.io import wavfile
+
+import librosa
+import noisereduce as nr
+import soundfile as sf
 from dotenv import load_dotenv
+from scipy.io import wavfile
 
 load_dotenv()
 
