@@ -10,8 +10,8 @@ from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
 # neural network:
-#   A [# -> 64], L [# -> 32], S [# -> 32]
-#   A+L+S [128 -> 64 -> 32 -> 1]
+#   A [52 -> 64], L [29 -> 32], S [18 -> 32], E [1024 -> 16]
+#   A+L+S [144 -> 256 -> 64 -> 32 -> 1]
 class MMSERegression(nn.Module):
     def __init__(self, n_acoustics, n_linguistics, n_semantics, n_embeddings, dropout=0.3):
         super().__init__()
@@ -95,7 +95,7 @@ regressor = MMSERegression(
     n_acoustics=52,
     n_linguistics=29,
     n_semantics=18,
-    n_embeddings=1280
+    n_embeddings=1024
 ).to(device)
 criterion = nn.HuberLoss(delta=1.5)
 optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)
@@ -130,7 +130,7 @@ def load_scaler(fp: Path):
 # ========== DATALOADER ========== #
 
 # creates a dataloader from inputs
-# X: [N, #], y: [N]
+# X: [N, 1123], y: [N]
 def create_dataloader(X, y, batch_size=32, shuffle=True):
     X = torch.tensor(X, dtype=torch.float32)
     y = torch.tensor(y, dtype=torch.float32).unsqueeze(1)

@@ -12,6 +12,7 @@ import whisper
 import whisperx
 import numpy as np
 import soundfile as sf
+from transformers import HubertModel, Wav2Vec2FeatureExtractor
 
 # Ignore this specific memory warning
 warnings.filterwarnings(
@@ -30,6 +31,11 @@ print('[ASR] Loading whisper model')
 model = whisper.load_model('large-v3-turbo')
 print('[ASR] Loading crisper-whisper model')
 modelx = whisperx.load_model(faster_whisper_model, device=DEVICE, compute_type=compute_type, vad_method='silero')
+
+print('[EMB] Loading hubert-large-ll60k')
+hubert_processor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/hubert-large-ll60k")
+hubert_model = HubertModel.from_pretrained("facebook/hubert-large-ll60k")
+hubert_model.eval()
 
 
 def _get_cache_key(filename: Path):
@@ -95,35 +101,36 @@ def asr(fp: Path, verbose=False):
     }
 
 def embeddings(fp: Path, verbose=False):
+    # check cache if embeddings have been saved
     cache_key = _get_cache_key(fp)
     cache_file = CACHE_DIR / f"{cache_key}.pkl"
 
     if cache_file.exists():
         if verbose:
-            print('[ASR] Loading cached embeddings')
+            print('[HUBERT] Loading cached')
         with open(cache_file, 'rb') as f:
             return pickle.load(f)
 
     if verbose:
-        print('[ASR] Computing embeddings')
+        print('[HUBERT] Computing embeddings')
 
-    # load audio
-    audio = whisper.load_audio(str(fp))
-    audio = whisper.pad_or_trim(audio)
+    # load audio and process
+    y, sr = librosa.load(str(fp), sr=16000, mono=True)
+    inputs = hubert_processor(y, sampling_rate=16000, return_tensors="pt")
 
-    mel = whisper.log_mel_spectrogram(audio,
-                                      n_mels=model.dims.n_mels).to(model.device)
+    if torch.cuda.is_available():
+        inputs = {k: v.cuda() for k, v in inputs.items()}
 
     with torch.no_grad():
-        frames = model.encoder(mel.unsqueeze(0))  # (1, n_frames, d_state)
+        outputs = hubert_model(**inputs)
+        # mean pool over time dimension
+        emb = outputs.last_hidden_state.mean(dim=1)
 
-    emb = frames.mean(dim=1)
-
-    # Save to cache
+    # cache it
     with open(cache_file, 'wb') as f:
-        pickle.dump(emb, f)
+        pickle.dump(emb.cpu(), f)
 
-    return emb
+    return emb.cpu()
 
 def sanitize_text(text: str, max_chars: int = 8000, max_repeat: int = 50) -> str:
     tokens = text.split()
