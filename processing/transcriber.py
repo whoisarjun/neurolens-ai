@@ -44,7 +44,6 @@ def normalize_audio(fp: Path):
         print(f'[WARN] Normalization failed: {e}')
         return fp
 
-
 def asr(fp: Path, verbose=False):
     if verbose:
         print('[ASR] Transcribing')
@@ -81,6 +80,21 @@ def asr(fp: Path, verbose=False):
         } for s in result.get('segments')],
         'filler_count': sum([s.get('text').count('[') for s in resultx.get('segments')])
     }
+
+def embeddings(fp: Path, verbose=False):
+    # load audio
+    audio = whisper.load_audio(str(fp))
+    audio = whisper.pad_or_trim(audio)
+
+    mel = whisper.log_mel_spectrogram(audio,
+                                      n_mels=model.dims.n_mels).to(model.device)
+
+    with torch.no_grad():
+        frames = model.encoder(mel.unsqueeze(0))  # (1, n_frames, d_state)
+
+    emb = frames.mean(dim=1)
+    return emb
+
 
 def sanitize_text(text: str, max_chars: int = 8000, max_repeat: int = 50) -> str:
     tokens = text.split()

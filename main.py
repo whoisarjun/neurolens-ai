@@ -7,6 +7,10 @@ from tqdm import tqdm
 import soundfile as sf
 from pathlib import Path
 
+from ml import model, augmentation
+from processing import cleanup, transcriber
+from features import acoustics, linguistics, semantics
+
 # ansi color codes
 RESET = "\033[0m"
 RED = "\033[31m"
@@ -18,10 +22,6 @@ BOLD = "\033[1m"
 
 torch.backends.cudnn.enabled = False
 torch.backends.cudnn.benchmark = False
-
-from ml import model, augmentation
-from processing import cleanup, transcriber
-from features import acoustics, linguistics, semantics
 
 TRAIN_JSON = Path('data_jsons/train.json')
 TEST_JSON = Path('data_jsons/test.json')
@@ -72,9 +72,10 @@ def process_single_item(item, augmentation_mode=0):
         # 3) transcribe (for acoustics + linguistics)
         transcript = transcriber.asr(processing_path, verbose=False)
 
-        # 4) extract acoustic + linguistic
+        # 4) extract acoustic + linguistic + whisper embeddings
         acoustic_features = acoustics.extract(processing_path, transcript, verbose=False)
         linguistic_features = linguistics.extract(transcript, verbose=False)
+        whisper_embeddings = transcriber.embeddings(processing_path)[0].cpu().numpy()
 
         # 5) semantic features with recovery path
         try:
@@ -103,7 +104,8 @@ def process_single_item(item, augmentation_mode=0):
         input_vector = np.concatenate([
             acoustic_features,
             linguistic_features,
-            semantic_features
+            semantic_features,
+            whisper_embeddings
         ])
 
         if augmentation_mode > 0:

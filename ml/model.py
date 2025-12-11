@@ -10,13 +10,14 @@ from torch.utils.data import TensorDataset, DataLoader
 #   A [# -> 64], L [# -> 32], S [# -> 32]
 #   A+L+S [128 -> 64 -> 32 -> 1]
 class MMSERegression(nn.Module):
-    def __init__(self, n_acoustics, n_linguistics, n_semantics, dropout=0.3):
+    def __init__(self, n_acoustics, n_linguistics, n_semantics, n_embeddings, dropout=0.3):
         super().__init__()
 
         # save feature type count
         self.n_acoustics = n_acoustics
         self.n_linguistics = n_linguistics
         self.n_semantics = n_semantics
+        self.n_embeddings = n_embeddings
 
         # separate encoders for each feature type
         self.acoustics_encoder = nn.Sequential(
@@ -37,10 +38,20 @@ class MMSERegression(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout)
         )
+        self.embeddings_encoder = nn.Sequential(
+            nn.Linear(n_embeddings, 16),
+            nn.LayerNorm(16),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
 
         # everything together
         self.fusion = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(144, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(256, 64),
             nn.LayerNorm(64),
             nn.ReLU(),
             nn.Dropout(dropout),
@@ -54,15 +65,17 @@ class MMSERegression(nn.Module):
     def forward(self, x):
         acoustic_features = x[:, :self.n_acoustics]
         linguistic_features = x[:, self.n_acoustics:self.n_acoustics + self.n_linguistics]
-        semantic_features = x[:, self.n_acoustics + self.n_linguistics:]
+        semantic_features = x[:, self.n_acoustics + self.n_linguistics:self.n_acoustics + self.n_linguistics + self.n_semantics]
+        embeddings_features = x[:, self.n_acoustics + self.n_linguistics + self.n_semantics:]
 
         # encode each feature type
         acoustic_emb = self.acoustics_encoder(acoustic_features)
         linguistic_emb = self.linguistics_encoder(linguistic_features)
         semantic_emb = self.semantics_encoder(semantic_features)
+        embeddings_emb = self.embeddings_encoder(embeddings_features)
 
         # concatenate and fuse (scale to mmse limit [0, 30])
-        input_vec = torch.cat([acoustic_emb, linguistic_emb, semantic_emb], dim=1)
+        input_vec = torch.cat([acoustic_emb, linguistic_emb, semantic_emb, embeddings_emb], dim=1)
         output = self.fusion(input_vec)
         output_clamped = torch.clamp(output, 0, 30)
 
@@ -78,7 +91,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 regressor = MMSERegression(
     n_acoustics=52,
     n_linguistics=29,
-    n_semantics=18
+    n_semantics=18,
+    n_embeddings=1280
 ).to(device)
 criterion = nn.HuberLoss(delta=1.5)
 optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)

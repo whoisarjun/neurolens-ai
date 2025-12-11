@@ -83,7 +83,7 @@ from ml import model
 
 # where input vectors are size (75,)
 X_train = np.array([input_vector_1, input_vector_2, ...])
-y_train = np.array([mmse_score_1, mmse_score_2, ...])
+y_train = np.array([mmse_score_1, mmse_score_2, ...]) 
 X_test = np.array([input_vector_1, input_vector_2, ...])
 y_test = np.array([mmse_score_1, mmse_score_2, ...])
 
