@@ -83,7 +83,7 @@ input_vector = np.concatenate([
 ```python
 from ml import model
 
-# where input vectors are size (75,)
+# where input vectors are size (99,)
 X_train = np.array([input_vector_1, input_vector_2, ...])
 y_train = np.array([mmse_score_1, mmse_score_2, ...]) 
 X_test = np.array([input_vector_1, input_vector_2, ...])
@@ -122,6 +122,7 @@ model.load('test/model_weights.pth')
 model.load_scaler('test/model_scaler.pkl')
 ```
 ---
+### Thanks to:
 Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014).
 Concreteness ratings for 40 thousand generally known English word lemmas.
 Behavior Research Methods, 46(3), 904–911.
