@@ -37,7 +37,6 @@ hubert_processor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/hubert-lar
 hubert_model = HubertModel.from_pretrained("facebook/hubert-large-ll60k")
 hubert_model.eval()
 
-
 def _get_cache_key(filename: Path):
     key = str(filename).split('DATA/')[-1]
     return hashlib.md5(key.encode()).hexdigest()
