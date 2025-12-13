@@ -3,8 +3,10 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 
+from ml import model
 from processing import pipeline
 
 # ansi color codes
@@ -23,6 +25,12 @@ torch.backends.cudnn.benchmark = False
 TRAIN_JSON = Path('data_jsons/train.json')
 VAL_JSON = Path('data_jsons/val.json')
 TEST_JSON = Path('data_jsons/test.json')
+
+MODEL_WEIGHTS_PATH = Path('models/model_weights.pth')
+SCALER_PATH = Path('models/model_scaler.pkl')
+
+FEATURE_DIR = Path('models/features')
+FEATURE_DIR.mkdir(parents=True, exist_ok=True)
 
 # load up jsons
 def load_split(json_path: Path):
@@ -70,8 +78,76 @@ def process_split(json_path: Path, split_name: str, augment=True):
 
     return X, y
 
+# training with proper train/val/test split
+def train(X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test, epochs=40):
+    # create dataloaders
+    train_loader = model.create_dataloader(X_train_scaled, y_train, batch_size=64)
+    val_loader = model.create_dataloader(X_val_scaled, y_val, batch_size=64)
+    test_loader = model.create_dataloader(X_test_scaled, y_test, batch_size=64)
+
+    MODEL_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{BOLD}{CYAN}Training neural network for {epochs} epochs...{RESET}")
+    print(f"{BLUE}Using validation set for early stopping, test set held out until end{RESET}")
+
+    best_val_mae = float('inf')
+
+    for epoch in range(epochs):
+        train_loss = model.train_one_epoch(train_loader)
+        val_loss, val_mae = model.test(val_loader)
+
+        # reduce learning rate if val mae plateaus
+        model.scheduler.step(val_loss)
+
+        # save model if validation MAE improves
+        if val_mae < best_val_mae:
+            best_val_mae = val_mae
+            model.save(MODEL_WEIGHTS_PATH)
+            model.save_scaler(SCALER_PATH)
+            indicator = " 💾"  # indicate save best
+        else:
+            indicator = ""
+
+        color = GREEN if indicator else BLUE
+        print(
+            f"{color}epoch {epoch + 1:02d}/{epochs} | "
+            f"train_loss: {train_loss:.4f} | "
+            f"val_loss: {val_loss:.4f} | "
+            f"val_mae: {val_mae:.4f}{indicator}{RESET}"
+        )
+
+    print(f"\n{GREEN}🎉 Training complete! Best validation MAE: {best_val_mae:.4f}{RESET}")
+
+    # Final evaluation on held-out test set
+    print(f"\n{BOLD}{MAGENTA}Evaluating on held-out test set...{RESET}")
+    model.load(MODEL_WEIGHTS_PATH)  # Load best model
+    test_loss, test_mae = model.test(test_loader)
+    print(f"{MAGENTA}Final Test Loss: {test_loss:.4f}{RESET}")
+    print(f"{BOLD}{MAGENTA}Final Test MAE: {test_mae:.4f}{RESET}")
+
 # main flow
 def main():
     X_train, y_train = process_split(TRAIN_JSON, 'train', augment=True)
     X_val, y_val = process_split(VAL_JSON, 'validation', augment=False)
     X_test, y_test = process_split(TEST_JSON, 'test', augment=False)
+    print(f"\n{GREEN}Done processing all data!{RESET}")
+
+    # scale features (fit on train only)
+    print(f"\n{BOLD}{CYAN}Fitting scaler on train data...{RESET}")
+    model.fit_scaler(X_train)
+
+    X_train_scaled = model.transform_features(X_train)
+    X_val_scaled = model.transform_features(X_val)
+    X_test_scaled = model.transform_features(X_test)
+
+    # save scaled features + labels
+    np.save(FEATURE_DIR / 'X_train_scaled.npy', X_train_scaled)
+    np.save(FEATURE_DIR / 'X_val_scaled.npy', X_val_scaled)
+    np.save(FEATURE_DIR / 'X_test_scaled.npy', X_test_scaled)
+    np.save(FEATURE_DIR / 'y_train.npy', y_train)
+    np.save(FEATURE_DIR / 'y_val.npy', y_val)
+    np.save(FEATURE_DIR / 'y_test.npy', y_test)
+
+    print(f"\n{GREEN}✓ Saved scaled features + labels to {FEATURE_DIR}{RESET}")
+
+    train(X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test)

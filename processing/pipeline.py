@@ -121,7 +121,10 @@ def extract_features_all(all_data: list):
         except semantics.LLMParseError:
             try:
                 # redo ASR and linguistic features from the original cleaned file for 2nd semantic features attempt
+                transcriber.get_whisper()
                 clean_transcript = transcriber.asr(base_fp, verbose=False)
+                transcriber.unload_models()
+
                 linguistic_features = linguistics.extract(clean_transcript, verbose=False)
                 semantic_features = semantics.extract(question, transcript, base_fp, verbose=False)
             except semantics.LLMParseError:
