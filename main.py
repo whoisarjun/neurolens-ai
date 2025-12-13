@@ -61,4 +61,13 @@ def process_split(json_path: Path, split_name: str, augment=True):
     pipeline.extract_features_all(data)
     print(f'{BOLD}{GREEN}Done extracting features from {split_name} data ✓{RESET}')
 
+    print(f'\n{BOLD}{CYAN}Generating embeddings from {split_name} data...{RESET}')
+    pipeline.gen_embeddings_all(data)
+    print(f'{BOLD}{GREEN}Done generating embeddings from {split_name} data ✓{RESET}')
+
+    X = [d['features'] for d in data]
+    y = [d['mmse'] for d in data]
+
+    return X, y
+
 process_split(TRAIN_JSON, 'train', augment=False)

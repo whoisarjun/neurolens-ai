@@ -128,5 +128,25 @@ def extract_features_all(all_data: list):
             acoustic_features,
             linguistic_features,
             semantic_features
-        ])
+        ]).astype(np.float32)
         data['features'] = features
+
+# ========== STAGE 6 ========== #
+def gen_embeddings_all(all_data: list):
+    desc = 'Generating audio embeddings'
+
+    transcriber.get_hubert()
+    for data in tqdm(all_data, desc=desc):
+        fp = data['output']
+
+        if not os.path.exists(fp):
+            raise FileNotFoundError(f'Cannot generate embeddings from nonexistent audio: {str(fp)}')
+
+        embeddings = transcriber.embeddings(fp)
+        embeddings_np = embeddings.numpy().ravel().astype(np.float32)
+        data['features'] = np.concatenate([
+            data['features'],
+            embeddings_np
+        ])
+
+    transcriber.unload_models()
