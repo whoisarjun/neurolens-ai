@@ -5,18 +5,14 @@
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 ```
-on two separate windows, run:
+on a separate window, run:
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama serve
 ```
-and:
-```bash
-ollama pull qwen2.5:7b
-ollama run qwen2.5:7b
-```
 on a new window, run:
 ```bash
+ollama pull qwen2.5:7b
 python main.py
 ```
 

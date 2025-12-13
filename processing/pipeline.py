@@ -7,9 +7,10 @@ from pathlib import Path
 import librosa
 import numpy as np
 import soundfile as sf
+import torch
 from tqdm import tqdm
 
-from features import acoustics, linguistics
+from features import acoustics, linguistics, semantics
 from ml import augmentation
 from processing import cleanup, transcriber
 
@@ -97,29 +98,35 @@ def count_fillers_all(all_data: list):
     transcriber.unload_models()
 
 # ========== STAGE 5 ========== #
-def extract_acoustics_all(all_data: list):
-    desc = 'Extracting acoustic features'
+def extract_features_all(all_data: list):
+    desc = 'Extracting features'
 
     for data in tqdm(all_data, desc=desc):
         fp = data['output']
+        question = data['question']
         transcript = data['transcript']
 
         if not os.path.exists(fp):
             raise FileNotFoundError(f'Cannot extract features from nonexistent audio: {str(fp)}')
 
-        acoustic_features = acoustics.extract(fp, transcript)
-        data['features'] = acoustic_features
+        acoustic_features = acoustics.extract(fp, transcript, verbose=False)
+        linguistic_features = linguistics.extract(transcript, verbose=False)
 
-# ========== STAGE 6 ========== #
-def extract_linguistics_all(all_data: list):
-    desc = 'Extracting linguistic features'
+        try:
+            semantic_features = semantics.extract(question, transcript, fp, verbose=False)
+        except semantics.LLMParseError:
+            try:
+                # redo ASR and linguistic features from the original cleaned file for 2nd semantic features attempt
+                clean_transcript = transcriber.asr(fp, verbose=False)
+                linguistic_features = linguistics.extract(clean_transcript, verbose=False)
+                semantic_features = semantics.extract(question, transcript, fp, verbose=False)
+            except semantics.LLMParseError:
+                print(f"LLM parse still failing for {fp.name}. setting default semantic features. 😭")
+                semantic_features = semantics.default_semantic_features()
 
-    for data in tqdm(all_data, desc=desc):
-        transcript = data['transcript']
-
-        linguistic_features = linguistics.extract(transcript)
-
-        data['features'] = np.concatenate([
-            data['features'],
-            np.asarray(linguistic_features)
+        features = np.concatenate([
+            acoustic_features,
+            linguistic_features,
+            semantic_features
         ])
+        data['features'] = features
