@@ -2,6 +2,7 @@
 
 import gc
 import hashlib
+import logging
 import pickle
 import tempfile
 import warnings
@@ -20,6 +21,10 @@ warnings.filterwarnings(
     "ignore",
     message="FP16 is not supported on CPU; using FP32 instead"
 )
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', module='torchaudio')
+warnings.filterwarnings('ignore', module='speechbrain')
+warnings.filterwarnings('ignore', module='pyannote')
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 compute_type = "float32"

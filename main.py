@@ -57,4 +57,12 @@ def process_split(json_path: Path, split_name: str, augment=True):
     pipeline.count_fillers_all(data)
     print(f'{BOLD}{GREEN}Done counting fillers in {split_name} data ✓{RESET}')
 
+    print(f'\n{BOLD}{CYAN}Extracting acoustic features from {split_name} data...{RESET}')
+    pipeline.extract_acoustics_all(data)
+    print(f'{BOLD}{GREEN}Done extracting acoustic features from {split_name} data ✓{RESET}')
+
+    print(f'\n{BOLD}{CYAN}Extracting linguistic features from {split_name} data...{RESET}')
+    pipeline.extract_linguistics_all(data)
+    print(f'{BOLD}{GREEN}Done extracting linguistic features from {split_name} data ✓{RESET}')
+
 process_split(TRAIN_JSON, 'train', augment=False)

@@ -5,9 +5,11 @@ from copy import deepcopy
 from pathlib import Path
 
 import librosa
+import numpy as np
 import soundfile as sf
 from tqdm import tqdm
 
+from features import acoustics, linguistics
 from ml import augmentation
 from processing import cleanup, transcriber
 
@@ -93,3 +95,31 @@ def count_fillers_all(all_data: list):
         data['transcript']['filler_count'] = transcriber.filler_count(fp)
 
     transcriber.unload_models()
+
+# ========== STAGE 5 ========== #
+def extract_acoustics_all(all_data: list):
+    desc = 'Extracting acoustic features'
+
+    for data in tqdm(all_data, desc=desc):
+        fp = data['output']
+        transcript = data['transcript']
+
+        if not os.path.exists(fp):
+            raise FileNotFoundError(f'Cannot extract features from nonexistent audio: {str(fp)}')
+
+        acoustic_features = acoustics.extract(fp, transcript)
+        data['features'] = acoustic_features
+
+# ========== STAGE 6 ========== #
+def extract_linguistics_all(all_data: list):
+    desc = 'Extracting linguistic features'
+
+    for data in tqdm(all_data, desc=desc):
+        transcript = data['transcript']
+
+        linguistic_features = linguistics.extract(transcript)
+
+        data['features'] = np.concatenate([
+            data['features'],
+            np.asarray(linguistic_features)
+        ])
