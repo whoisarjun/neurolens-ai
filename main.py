@@ -49,4 +49,12 @@ def process_split(json_path: Path, split_name: str, augment=True):
         data = pipeline.augment_all(data)
         print(f'{BOLD}{GREEN}Done augmenting {split_name} data ✓{RESET}')
 
-process_split(TRAIN_JSON, 'train')
+    print(f'\n{BOLD}{CYAN}Transcribing {split_name} data...{RESET}')
+    pipeline.transcribe_all(data)
+    print(f'{BOLD}{GREEN}Done transcribing {split_name} data ✓{RESET}')
+
+    print(f'\n{BOLD}{CYAN}Counting fillers in {split_name} data...{RESET}')
+    pipeline.count_fillers_all(data)
+    print(f'{BOLD}{GREEN}Done counting fillers in {split_name} data ✓{RESET}')
+
+process_split(TRAIN_JSON, 'train', augment=False)

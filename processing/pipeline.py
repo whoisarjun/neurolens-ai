@@ -9,7 +9,7 @@ import soundfile as sf
 from tqdm import tqdm
 
 from ml import augmentation
-from processing import cleanup
+from processing import cleanup, transcriber
 
 # ansi color codes
 RESET = "\033[0m"
@@ -63,3 +63,33 @@ def augment_all(all_data: list):
             augmented_list.append(aug_data)
 
     return augmented_list
+
+# ========== STAGE 3 ========== #
+def transcribe_all(all_data: list):
+    desc = 'Transcribing audio'
+
+    transcriber.get_whisper()
+    for data in tqdm(all_data, desc=desc):
+        fp = data['output']
+
+        if not os.path.exists(fp):
+            raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {str(fp)}')
+
+        data['transcript'] = transcriber.asr(fp)
+
+    transcriber.unload_models()
+
+# ========== STAGE 4 ========== #
+def count_fillers_all(all_data: list):
+    desc = 'Counting fillers'
+
+    transcriber.get_crisper()
+    for data in tqdm(all_data, desc=desc):
+        fp = data['output']
+
+        if not os.path.exists(fp):
+            raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {str(fp)}')
+
+        data['transcript']['filler_count'] = transcriber.filler_count(fp)
+
+    transcriber.unload_models()
