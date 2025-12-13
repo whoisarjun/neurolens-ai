@@ -1,6 +1,7 @@
 # Centralizaed script for stage-wise batch processing (memory efficiency)
 
 import os
+import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -102,7 +103,7 @@ def extract_features_all(all_data: list):
     desc = 'Extracting features'
 
     for data in tqdm(all_data, desc=desc):
-        fp = data['output']
+        fp = Path(data['output'])
         question = data['question']
         transcript = data['transcript']
 
@@ -112,16 +113,19 @@ def extract_features_all(all_data: list):
         acoustic_features = acoustics.extract(fp, transcript, verbose=False)
         linguistic_features = linguistics.extract(transcript, verbose=False)
 
+        base_fp = fp.with_name(
+            re.sub(r'_aug\d+$', '', fp.stem) + fp.suffix
+        )
         try:
-            semantic_features = semantics.extract(question, transcript, fp, verbose=False)
+            semantic_features = semantics.extract(question, transcript, base_fp, verbose=False)
         except semantics.LLMParseError:
             try:
                 # redo ASR and linguistic features from the original cleaned file for 2nd semantic features attempt
-                clean_transcript = transcriber.asr(fp, verbose=False)
+                clean_transcript = transcriber.asr(base_fp, verbose=False)
                 linguistic_features = linguistics.extract(clean_transcript, verbose=False)
-                semantic_features = semantics.extract(question, transcript, fp, verbose=False)
+                semantic_features = semantics.extract(question, transcript, base_fp, verbose=False)
             except semantics.LLMParseError:
-                print(f"LLM parse still failing for {fp.name}. setting default semantic features. 😭")
+                print(f"LLM parse still failing for {base_fp.name}. setting default semantic features. 😭")
                 semantic_features = semantics.default_semantic_features()
 
         features = np.concatenate([

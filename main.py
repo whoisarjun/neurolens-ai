@@ -70,4 +70,8 @@ def process_split(json_path: Path, split_name: str, augment=True):
 
     return X, y
 
-process_split(TRAIN_JSON, 'train', augment=False)
+# main flow
+def main():
+    X_train, y_train = process_split(TRAIN_JSON, 'train', augment=True)
+    X_val, y_val = process_split(VAL_JSON, 'validation', augment=False)
+    X_test, y_test = process_split(TEST_JSON, 'test', augment=False)
