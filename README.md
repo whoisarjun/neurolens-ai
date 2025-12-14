@@ -124,3 +124,9 @@ Concreteness ratings for 40 thousand generally known English word lemmas.
 Behavior Research Methods, 46(3), 904–911.
 
 file: `features/concreteness.csv`
+
+### Datasets used:
+- DementiaBank Pitt Corpus
+- ADReSS-IS2020
+- ADReSS-M
+- ADReSSo21

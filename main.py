@@ -151,3 +151,6 @@ def main():
     print(f"\n{GREEN}✓ Saved scaled features + labels to {FEATURE_DIR}{RESET}")
 
     train(X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test)
+
+if __name__ == '__main__':
+    main()

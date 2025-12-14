@@ -73,13 +73,34 @@ def transcribe_all(all_data: list):
     desc = 'Transcribing audio'
 
     transcriber.get_whisper()
+    transcript_cache = {}  # base_fp -> transcript
+
     for data in tqdm(all_data, desc=desc):
-        fp = data['output']
+        fp = Path(data['output'])
 
-        if not os.path.exists(fp):
-            raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {str(fp)}')
+        if not fp.exists():
+            raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {fp}')
 
-        data['transcript'] = transcriber.asr(fp)
+        # detect augmentation
+        m = re.match(r'(.+)_aug\d+$', fp.stem)
+
+        if m:
+            # this is an augmented file → reuse base transcript
+            base_fp = fp.with_name(m.group(1) + fp.suffix)
+
+            if base_fp not in transcript_cache:
+                raise RuntimeError(
+                    f'Base transcript missing for {fp.name}. '
+                    f'Make sure base files come before augmentations.'
+                )
+
+            data['transcript'] = transcript_cache[base_fp]
+
+        else:
+            # base file → do ASR once
+            transcript = transcriber.asr(fp)
+            data['transcript'] = transcript
+            transcript_cache[fp] = transcript
 
     transcriber.unload_models()
 
@@ -88,13 +109,33 @@ def count_fillers_all(all_data: list):
     desc = 'Counting fillers'
 
     transcriber.get_crisper()
+    filler_cache = {}  # base_fp -> filler_count
+
     for data in tqdm(all_data, desc=desc):
-        fp = data['output']
+        fp = Path(data['output'])
 
-        if not os.path.exists(fp):
-            raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {str(fp)}')
+        if not fp.exists():
+            raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {fp}')
 
-        data['transcript']['filler_count'] = transcriber.filler_count(fp)
+        m = re.match(r'(.+)_aug\d+$', fp.stem)
+
+        if m:
+            # augmented → reuse base
+            base_fp = fp.with_name(m.group(1) + fp.suffix)
+
+            if base_fp not in filler_cache:
+                raise RuntimeError(
+                    f'Base filler count missing for {fp.name}. '
+                    f'Make sure base files come before augmentations.'
+                )
+
+            data['transcript']['filler_count'] = filler_cache[base_fp]
+
+        else:
+            # base → compute once
+            filler_count = transcriber.filler_count(fp)
+            data['transcript']['filler_count'] = filler_count
+            filler_cache[fp] = filler_count
 
     transcriber.unload_models()
 
