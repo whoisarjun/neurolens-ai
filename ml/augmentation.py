@@ -2,7 +2,7 @@ import librosa
 import numpy as np
 
 # augmentation to preserve relevant acoustic features but adding realistic variability
-class DementiaAudioAugmenter:
+class AudioAugmenter:
     def __init__(self, sr: int = 16000):
         self.sr = sr
 
@@ -94,7 +94,7 @@ class AugmentedDataLoader:
     def __init__(self, original_data, augment_multiplier: int = 3):
         self.original_data = original_data
         self.augment_multiplier = augment_multiplier
-        self.augmenter = DementiaAudioAugmenter(sr=16000)
+        self.augmenter = AudioAugmenter(sr=16000)
 
     def __len__(self):
         return len(self.original_data) * (1 + self.augment_multiplier)
@@ -117,7 +117,7 @@ class AugmentedDataLoader:
 # ===== INTEGRATION HELPERS ===== #
 
 def augment_audio_file(input_path: str, augmentation_mode: int, sr: int = 16000) -> np.ndarray:
-    augmenter = DementiaAudioAugmenter(sr=sr)
+    augmenter = AudioAugmenter(sr=sr)
 
     # load audio
     y, _ = librosa.load(input_path, sr=sr, mono=True)
