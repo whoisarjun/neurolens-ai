@@ -129,3 +129,5 @@ file: `features/concreteness.csv`
 - ADReSS-IS2020
 - ADReSS-M
 - ADReSSo21
+- TAUKADIAL
+- Pitt Corpus
