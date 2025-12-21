@@ -69,7 +69,7 @@ def augment_all(all_data: list):
     return augmented_list
 
 # ========== STAGE 3 ========== #
-def transcribe_all(all_data: list):
+def transcribe_all(all_data: list, use_cache_transcripts=True):
     desc = 'Transcribing audio'
 
     transcriber.get_whisper()
@@ -98,49 +98,14 @@ def transcribe_all(all_data: list):
 
         else:
             # base file → do ASR once
-            transcript = transcriber.asr(fp)
+            transcript = transcriber.asr(fp, use_cache=use_cache_transcripts)
             data['transcript'] = transcript
             transcript_cache[fp] = transcript
 
     transcriber.unload_models()
 
 # ========== STAGE 4 ========== #
-def count_fillers_all(all_data: list):
-    desc = 'Counting fillers'
-
-    transcriber.get_crisper()
-    filler_cache = {}  # base_fp -> filler_count
-
-    for data in tqdm(all_data, desc=desc):
-        fp = Path(data['output'])
-
-        if not fp.exists():
-            raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {fp}')
-
-        m = re.match(r'(.+)_aug\d+$', fp.stem)
-
-        if m:
-            # augmented → reuse base
-            base_fp = fp.with_name(m.group(1) + fp.suffix)
-
-            if base_fp not in filler_cache:
-                raise RuntimeError(
-                    f'Base filler count missing for {fp.name}. '
-                    f'Make sure base files come before augmentations.'
-                )
-
-            data['transcript']['filler_count'] = filler_cache[base_fp]
-
-        else:
-            # base → compute once
-            filler_count = transcriber.filler_count(fp)
-            data['transcript']['filler_count'] = filler_count
-            filler_cache[fp] = filler_count
-
-    transcriber.unload_models()
-
-# ========== STAGE 5 ========== #
-def extract_features_all(all_data: list):
+def extract_features_all(all_data: list, use_cache_semantics=True):
     desc = 'Extracting features'
 
     for data in tqdm(all_data, desc=desc):
@@ -158,16 +123,16 @@ def extract_features_all(all_data: list):
             re.sub(r'_aug\d+$', '', fp.stem) + fp.suffix
         )
         try:
-            semantic_features = semantics.extract(question, transcript, base_fp, verbose=False)
+            semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics, verbose=False)
         except semantics.LLMParseError:
             try:
                 # redo ASR and linguistic features from the original cleaned file for 2nd semantic features attempt
                 transcriber.get_whisper()
-                clean_transcript = transcriber.asr(base_fp, verbose=False)
+                clean_transcript = transcriber.asr(base_fp, use_cache=False, verbose=False)
                 transcriber.unload_models()
 
                 linguistic_features = linguistics.extract(clean_transcript, verbose=False)
-                semantic_features = semantics.extract(question, transcript, base_fp, verbose=False)
+                semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics, verbose=False)
             except semantics.LLMParseError:
                 print(f"LLM parse still failing for {base_fp.name}. setting default semantic features. 😭")
                 semantic_features = semantics.default_semantic_features()
@@ -179,8 +144,8 @@ def extract_features_all(all_data: list):
         ]).astype(np.float32)
         data['features'] = features
 
-# ========== STAGE 6 ========== #
-def gen_embeddings_all(all_data: list):
+# ========== STAGE 5 ========== #
+def gen_embeddings_all(all_data: list, use_cache_embeddings=True):
     desc = 'Generating audio embeddings'
 
     transcriber.get_hubert()
@@ -190,7 +155,7 @@ def gen_embeddings_all(all_data: list):
         if not os.path.exists(fp):
             raise FileNotFoundError(f'Cannot generate embeddings from nonexistent audio: {str(fp)}')
 
-        embeddings = transcriber.embeddings(fp)
+        embeddings = transcriber.embeddings(fp, use_cache=use_cache_embeddings)
         embeddings_np = embeddings.numpy().ravel().astype(np.float32)
         data['features'] = np.concatenate([
             data['features'],

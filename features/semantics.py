@@ -1,14 +1,14 @@
 # Extraction of LLM scores
 
-import hashlib
 import json
-import pickle
 import re
 from pathlib import Path
 
 import numpy as np
 from ollama import chat
 from ollama import ChatResponse
+
+from utils import cache
 
 CACHE_DIR = Path('cache/semantics')
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -90,11 +90,6 @@ def _parse_scores(raw: str) -> list[float]:
         else DEFAULT_SEMANTIC_SCORE
         for item in data['scores']
     ]
-
-def _get_cache_key(filename: Path):
-    key = str(filename).split('DATA/')[-1]
-
-    return hashlib.md5(key.encode()).hexdigest()
 
 class LLMParseError(Exception):
     # if the llm reponse cannot be parsed after 3 tries
@@ -344,24 +339,15 @@ def _ask_features(question: str, transcript: dict, features: list[dict], verbose
 
 # ========== COMBINE EVERYTHING ========== #
 
-def extract(question: str, transcript: dict, filename: Path, verbose=False):
-    cache_key = _get_cache_key(filename)
-    cache_file = CACHE_DIR / f"{cache_key}.pkl"
-
-    if cache_file.exists():
-        if verbose:
-            print('[LLM] Loading cached scores')
-        with open(cache_file, 'rb') as f:
-            return pickle.load(f)
-
-    if verbose:
-        print('[LLM] Producing LLM scores')
-
-    # this can now raise LLMParseError
-    scores = np.array(_ask_features(question, transcript, feature_list, verbose), dtype=np.float32)
-
-    with open(cache_file, 'wb') as f:
-        pickle.dump(scores, f)
+def extract(question: str, transcript: dict, filename: Path, use_cache=True, verbose=False):
+    scores = None
+    cache_file = cache.key(filename, CACHE_DIR)
+    if use_cache:
+        scores = cache.load(cache_file)
+    if scores is None:
+        # this can now raise LLMParseError
+        scores = np.array(_ask_features(question, transcript, feature_list, verbose), dtype=np.float32)
+        cache.save(cache_file, scores)
 
     return scores
 

@@ -108,7 +108,7 @@ def _repetition_disfluency(transcript: dict):
     text = re.sub(r'\s+', ' ', text)
     text = text.strip()
 
-    filler_count = transcript.get('filler_count', 0) + sum([text.count(f) for f in [
+    filler_count = transcript.get('fillers', 0) + sum([text.count(f) for f in [
         'well', 'actually', 'basically', 'so', 'like', 'you know'
     ]])
 

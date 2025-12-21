@@ -192,7 +192,8 @@ def test(loader):
             actuals.extend(batch_y.cpu().numpy())
 
     mae = np.mean(np.abs(np.array(predictions) - np.array(actuals)))
-    return total_loss / len(loader), mae
+    rmse = np.sqrt(np.mean((np.array(predictions) - np.array(actuals)) ** 2))
+    return total_loss / len(loader), mae, rmse
 
 # ========== SAVE/LOAD WEIGHTS ========== #
 
