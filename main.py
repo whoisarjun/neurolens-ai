@@ -45,6 +45,8 @@ def process_split(json_path: Path, split_name: str, use_cache=None, augment=True
     if use_cache is None:
         use_cache = {
             'transcript': True,
+            'acoustics': False,
+            'linguistics': False,
             'semantics': True,
             'embeddings': True
         }
@@ -70,7 +72,7 @@ def process_split(json_path: Path, split_name: str, use_cache=None, augment=True
     print(f'{BOLD}{GREEN}Done transcribing {split_name} data ✓{RESET}')
 
     print(f'\n{BOLD}{CYAN}Extracting features from {split_name} data...{RESET}')
-    pipeline.extract_features_all(data, use_cache_semantics=use_cache['semantics'])
+    pipeline.extract_features_all(data, use_cache_acoustics=use_cache['acoustics'], use_cache_linguistics=use_cache['linguistics'], use_cache_semantics=use_cache['semantics'])
     print(f'{BOLD}{GREEN}Done extracting features from {split_name} data ✓{RESET}')
 
     print(f'\n{BOLD}{CYAN}Generating embeddings from {split_name} data...{RESET}')
@@ -135,6 +137,8 @@ def train(X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test, e
 def main():
     use_cache_list = {
         'transcript': cache.ask('transcripts'),
+        'acoustics': cache.ask('acoustic features'),
+        'linguistics': cache.ask('linguistic features'),
         'semantics': cache.ask('LLM-generated semantic features'),
         'embeddings': cache.ask('audio embeddings')
     }

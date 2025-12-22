@@ -49,21 +49,26 @@ def augment_all(all_data: list):
     for data in tqdm(all_data, desc=desc):
         fp = Path(data['output'])
 
-        if not os.path.exists(fp):
-            raise FileNotFoundError(f'Cannot augment nonexistent file: {str(fp)}')
+        if not fp.exists():
+            raise FileNotFoundError(f'Cannot augment nonexistent file: {fp}')
 
         y, sr = librosa.load(str(fp), sr=16000, mono=True)
         augmenter = augmentation.AudioAugmenter(sr=16000)
 
         for aug_mode in range(1, 4):
-            y_aug = augmenter.apply_augmentation(y, aug_mode)
-
             aug_fp = fp.with_name(f'{fp.stem}_aug{aug_mode}{fp.suffix}')
+
+            if aug_fp.exists():
+                aug_data = deepcopy(data)
+                aug_data['output'] = str(aug_fp)
+                augmented_list.append(aug_data)
+                continue
+
+            y_aug = augmenter.apply_augmentation(y, aug_mode)
             sf.write(aug_fp, y_aug, sr)
 
             aug_data = deepcopy(data)
             aug_data['output'] = str(aug_fp)
-
             augmented_list.append(aug_data)
 
     return augmented_list
@@ -105,7 +110,7 @@ def transcribe_all(all_data: list, use_cache_transcripts=True):
     transcriber.unload_models()
 
 # ========== STAGE 4 ========== #
-def extract_features_all(all_data: list, use_cache_semantics=True):
+def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_linguistics=False, use_cache_semantics=True):
     desc = 'Extracting features'
 
     for data in tqdm(all_data, desc=desc):
@@ -116,8 +121,8 @@ def extract_features_all(all_data: list, use_cache_semantics=True):
         if not os.path.exists(fp):
             raise FileNotFoundError(f'Cannot extract features from nonexistent audio: {str(fp)}')
 
-        acoustic_features = acoustics.extract(fp, transcript, verbose=False)
-        linguistic_features = linguistics.extract(transcript, verbose=False)
+        acoustic_features = acoustics.extract(fp, transcript, use_cache=use_cache_acoustics, verbose=False)
+        linguistic_features = linguistics.extract(fp, transcript, use_cache=use_cache_linguistics, verbose=False)
 
         base_fp = fp.with_name(
             re.sub(r'_aug\d+$', '', fp.stem) + fp.suffix
@@ -131,7 +136,7 @@ def extract_features_all(all_data: list, use_cache_semantics=True):
                 clean_transcript = transcriber.asr(base_fp, use_cache=False, verbose=False)
                 transcriber.unload_models()
 
-                linguistic_features = linguistics.extract(clean_transcript, verbose=False)
+                linguistic_features = linguistics.extract(fp, clean_transcript, use_cache=False, verbose=False)
                 semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics, verbose=False)
             except semantics.LLMParseError:
                 print(f"LLM parse still failing for {base_fp.name}. setting default semantic features. 😭")

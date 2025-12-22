@@ -13,6 +13,11 @@ from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from wordfreq import zipf_frequency
 
+from utils import cache
+
+CACHE_DIR = Path('cache/linguistics')
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 nlp = spacy.load('en_core_web_sm')
 transformer = SentenceTransformer('all-mpnet-base-v2')
 
@@ -369,56 +374,66 @@ def _discourse_coherence(transcript: dict):
 
 # ========== COMBINE EVERYTHING ========== #
 
-def extract(transcript: dict, verbose=False):
-    if verbose:
-        print('[LING] Extracting linguistic features')
+def extract(fn: Path, transcript: dict, use_cache=False, verbose=False):
+    linguistics = None
+    cache_file = cache.key(fn, CACHE_DIR)
+    if use_cache:
+        linguistics = cache.load(cache_file)
+    if linguistics is None:
+        if verbose:
+            print('[LING] Extracting linguistic features')
 
-    total_tokens, unique_tokens, type_token_ratio, mean_words_per_utterance, max_utterance_length, sentence_count = _text_stats(transcript)
-    content_words_ratio, function_words_ratio, rare_words_ratio = _lexical_richness(transcript)
-    filler_count, repetition_score, bigram_repetition_ratio, self_correction_count = _repetition_disfluency(transcript)
-    semantic_coherence_mean, semantic_coherence_variance = _semantic_coherence(transcript)
-    mean_dependency_distance, clause_density, mean_parse_tree_height = _syntactic_complexity(transcript)
-    pronoun_ratio, verb_to_noun_ratio, auxiliary_verb_ratio = _pos_ratios(transcript)
-    idea_density, mean_concreteness, abstract_ratio = _semantic_content(transcript)
-    fk_grade, mean_syllables, long_word_ratio = _vocabulary_sophistication(transcript)
-    global_coherence_drift, topic_recurrence = _discourse_coherence(transcript)
+        total_tokens, unique_tokens, type_token_ratio, mean_words_per_utterance, max_utterance_length, sentence_count = _text_stats(
+            transcript)
+        content_words_ratio, function_words_ratio, rare_words_ratio = _lexical_richness(transcript)
+        filler_count, repetition_score, bigram_repetition_ratio, self_correction_count = _repetition_disfluency(
+            transcript)
+        semantic_coherence_mean, semantic_coherence_variance = _semantic_coherence(transcript)
+        mean_dependency_distance, clause_density, mean_parse_tree_height = _syntactic_complexity(transcript)
+        pronoun_ratio, verb_to_noun_ratio, auxiliary_verb_ratio = _pos_ratios(transcript)
+        idea_density, mean_concreteness, abstract_ratio = _semantic_content(transcript)
+        fk_grade, mean_syllables, long_word_ratio = _vocabulary_sophistication(transcript)
+        global_coherence_drift, topic_recurrence = _discourse_coherence(transcript)
 
-    LINGUISTIC_FEATURES = np.array([
-        # Basic text stats (6)
-        total_tokens, unique_tokens, type_token_ratio, mean_words_per_utterance, max_utterance_length, sentence_count,
+        LINGUISTIC_FEATURES = np.array([
+            # Basic text stats (6)
+            total_tokens, unique_tokens, type_token_ratio, mean_words_per_utterance, max_utterance_length,
+            sentence_count,
 
-        # Lexical richness (3)
-        content_words_ratio, function_words_ratio, rare_words_ratio,
+            # Lexical richness (3)
+            content_words_ratio, function_words_ratio, rare_words_ratio,
 
-        # Repetition & disfluency (4)
-        filler_count, repetition_score, bigram_repetition_ratio, self_correction_count,
+            # Repetition & disfluency (4)
+            filler_count, repetition_score, bigram_repetition_ratio, self_correction_count,
 
-        # Semantic coherence (2)
-        semantic_coherence_mean, semantic_coherence_variance,
+            # Semantic coherence (2)
+            semantic_coherence_mean, semantic_coherence_variance,
 
-        # Syntactic complexity (3)
-        mean_dependency_distance, clause_density, mean_parse_tree_height,
+            # Syntactic complexity (3)
+            mean_dependency_distance, clause_density, mean_parse_tree_height,
 
-        # Parts-of-speech ratios (3)
-        pronoun_ratio, verb_to_noun_ratio, auxiliary_verb_ratio,
+            # Parts-of-speech ratios (3)
+            pronoun_ratio, verb_to_noun_ratio, auxiliary_verb_ratio,
 
-        # Semantic content (3)
-        idea_density, mean_concreteness, abstract_ratio,
+            # Semantic content (3)
+            idea_density, mean_concreteness, abstract_ratio,
 
-        # Vocabulary sophistication (3)
-        fk_grade, mean_syllables, long_word_ratio,
+            # Vocabulary sophistication (3)
+            fk_grade, mean_syllables, long_word_ratio,
 
-        # Discourse coherence (2)
-        global_coherence_drift, topic_recurrence
-    ])
+            # Discourse coherence (2)
+            global_coherence_drift, topic_recurrence
+        ])
 
-    if verbose:
-        print('[LING] Done extracting')
+        if verbose:
+            print('[LING] Done extracting')
 
-    # replace all nans with zeros just for training purposes
-    return np.nan_to_num(
-        LINGUISTIC_FEATURES,
-        nan=0.0,
-        posinf=0.0,
-        neginf=0.0
-    )
+        # replace all nans with zeros just for training purposes
+        linguistics = np.nan_to_num(
+            LINGUISTIC_FEATURES,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0
+        )
+        cache.save(fn, linguistics)
+    return linguistics

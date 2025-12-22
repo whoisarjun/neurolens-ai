@@ -76,6 +76,7 @@ def get_hubert():
         hubert_model = HubertModel.from_pretrained(
             'facebook/hubert-large-ll60k'
         )
+        hubert_model = hubert_model.to(DEVICE)
         hubert_model.eval()
     return hubert_model, hubert_processor
 
@@ -91,7 +92,7 @@ def unload_models():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def asr(fp: Path, use_cache=True, verbose=False):
+def asr(fp: Path, use_cache=False, verbose=False):
     model = get_whisper()
 
     transcript = None
@@ -130,7 +131,7 @@ def asr(fp: Path, use_cache=True, verbose=False):
         cache.save(cache_file, transcript)
     return transcript
 
-def embeddings(fp: Path, use_cache=True, verbose=False):
+def embeddings(fp: Path, use_cache=False, verbose=False):
     hubert_model, hubert_processor = get_hubert()
 
     emb = None

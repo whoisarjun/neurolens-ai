@@ -312,7 +312,7 @@ def _ask_features(question: str, transcript: dict, features: list[dict], verbose
         for attempt in range(3):
             try:
                 raw = _prompt(question, transcript.get('text', ''), s)
-                return _parse_scores(raw, s)
+                return _parse_scores(raw)
             except LLMParseError as e:
                 # smth wrong with the transcript → no point retrying 3 times
                 last_error = e
@@ -339,7 +339,7 @@ def _ask_features(question: str, transcript: dict, features: list[dict], verbose
 
 # ========== COMBINE EVERYTHING ========== #
 
-def extract(question: str, transcript: dict, filename: Path, use_cache=True, verbose=False):
+def extract(question: str, transcript: dict, filename: Path, use_cache=False, verbose=False):
     scores = None
     cache_file = cache.key(filename, CACHE_DIR)
     if use_cache:

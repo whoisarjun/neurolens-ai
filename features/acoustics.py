@@ -10,6 +10,11 @@ import webrtcvad
 from parselmouth.praat import call
 from scipy.signal import medfilt
 
+from utils import cache
+
+CACHE_DIR = Path('cache/acoustics')
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 # vad (voice activity detection)
 def _vad(y: np.ndarray, sr: int):
     # normalize everything to max int
@@ -221,51 +226,59 @@ def _voice_quality(y, sr):
 
 # ========== COMBINE EVERYTHING ========== #
 
-def extract(fn: Path, transcript: dict, verbose=False):
-    if verbose:
-        print('[ACOU] Extracting acoustic features')
+def extract(fn: Path, transcript: dict, use_cache=False, verbose=False):
+    acoustics = None
+    cache_file = cache.key(fn, CACHE_DIR)
+    if use_cache:
+        acoustics, cache.load(cache_file)
+    if acoustics is None:
+        if verbose:
+            print('[ACOU] Extracting acoustic features')
 
-    mean_f0, std_f0, min_f0, max_f0, f0_iqr, duration, vad_duration, pause_count, vad_y, vad_sr = _f0(fn)
-    mean_energy, std_energy, energy_range = _energy(fn)
-    words_ps, syllables_ps = _speed(transcript, vad_duration)
-    total_pauses, pause_ratio = _pauses(duration, vad_duration)
-    mfccs = _mfccs(vad_y, vad_sr)
-    spectral_centroid_mean, spectral_centroid_std, spectral_bandwidth_mean, spectral_bandwidth_std, spectral_flux_mean, spectral_flux_std, spectral_slope = _spectral(vad_y, vad_sr)
-    jitter, shimmer, hnr, cpp, zcr_mean, zcr_std = _voice_quality(vad_y, vad_sr)
+        mean_f0, std_f0, min_f0, max_f0, f0_iqr, duration, vad_duration, pause_count, vad_y, vad_sr = _f0(fn)
+        mean_energy, std_energy, energy_range = _energy(fn)
+        words_ps, syllables_ps = _speed(transcript, vad_duration)
+        total_pauses, pause_ratio = _pauses(duration, vad_duration)
+        mfccs = _mfccs(vad_y, vad_sr)
+        spectral_centroid_mean, spectral_centroid_std, spectral_bandwidth_mean, spectral_bandwidth_std, spectral_flux_mean, spectral_flux_std, spectral_slope = _spectral(
+            vad_y, vad_sr)
+        jitter, shimmer, hnr, cpp, zcr_mean, zcr_std = _voice_quality(vad_y, vad_sr)
 
-    ACOUSTIC_FEATURES = np.array([
-        # F0/Pitch (5)
-        mean_f0, std_f0, min_f0, max_f0, f0_iqr,
+        ACOUSTIC_FEATURES = np.array([
+            # F0/Pitch (5)
+            mean_f0, std_f0, min_f0, max_f0, f0_iqr,
 
-        # Energy (3)
-        mean_energy, std_energy, energy_range,
+            # Energy (3)
+            mean_energy, std_energy, energy_range,
 
-        # Speaking rate (2)
-        words_ps, syllables_ps,
+            # Speaking rate (2)
+            words_ps, syllables_ps,
 
-        # Pauses (3)
-        pause_count, total_pauses, pause_ratio,
+            # Pauses (3)
+            pause_count, total_pauses, pause_ratio,
 
-        # MFCC means and stds (26)
-        *mfccs,
+            # MFCC means and stds (26)
+            *mfccs,
 
-        # Spectral (7)
-        spectral_centroid_mean, spectral_centroid_std,
-        spectral_bandwidth_mean, spectral_bandwidth_std,
-        spectral_flux_mean, spectral_flux_std,
-        spectral_slope,
+            # Spectral (7)
+            spectral_centroid_mean, spectral_centroid_std,
+            spectral_bandwidth_mean, spectral_bandwidth_std,
+            spectral_flux_mean, spectral_flux_std,
+            spectral_slope,
 
-        # Voice quality (6)
-        jitter, shimmer, hnr, cpp,
-        zcr_mean, zcr_std
-    ])
+            # Voice quality (6)
+            jitter, shimmer, hnr, cpp,
+            zcr_mean, zcr_std
+        ])
 
-    if verbose:
-        print('[ACOU] Done extracting')
+        if verbose:
+            print('[ACOU] Done extracting')
 
-    return np.nan_to_num(
-        ACOUSTIC_FEATURES,
-        nan=0.0,
-        posinf=0.0,
-        neginf=0.0
-    )
+        acoustics = np.nan_to_num(
+            ACOUSTIC_FEATURES,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0
+        )
+        cache.save(fn, acoustics)
+    return acoustics
