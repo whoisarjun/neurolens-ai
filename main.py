@@ -76,7 +76,7 @@ def process_split(json_path: Path, split_name: str, use_cache=None, augment=True
     print(f'{BOLD}{GREEN}Done extracting features from {split_name} data ✓{RESET}')
 
     print(f'\n{BOLD}{CYAN}Generating embeddings from {split_name} data...{RESET}')
-    pipeline.gen_embeddings_all(data, use_cache_embeddings=use_cache['embeddings'])
+    pipeline.gen_embeddings_all(data, use_cache_embeddings=use_cache['embeddings'], batch_size=4)
     print(f'{BOLD}{GREEN}Done generating embeddings from {split_name} data ✓{RESET}')
 
     X = [d['features'] for d in data]

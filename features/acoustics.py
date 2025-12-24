@@ -230,7 +230,8 @@ def extract(fn: Path, transcript: dict, use_cache=False, verbose=False):
     acoustics = None
     cache_file = cache.key(fn, CACHE_DIR)
     if use_cache:
-        acoustics, cache.load(cache_file)
+        acoustics = cache.load(cache_file)
+        # print(f"[ACOU] Loaded from cache: {acoustics is not None}, file: {cache_file.name}")  # debug
     if acoustics is None:
         if verbose:
             print('[ACOU] Extracting acoustic features')
@@ -280,5 +281,5 @@ def extract(fn: Path, transcript: dict, use_cache=False, verbose=False):
             posinf=0.0,
             neginf=0.0
         )
-        cache.save(fn, acoustics)
+        cache.save(cache_file, acoustics)
     return acoustics

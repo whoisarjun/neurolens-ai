@@ -48,4 +48,6 @@ CLEANED_DATA/
 data_jsons/
 cache/
 models/features/
+cache_backup*.zip
 data_backup*.zip
+llm_eval/EVAL_DATA/

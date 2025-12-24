@@ -74,7 +74,7 @@ def augment_all(all_data: list):
     return augmented_list
 
 # ========== STAGE 3 ========== #
-def transcribe_all(all_data: list, use_cache_transcripts=True):
+def transcribe_all(all_data: list, use_cache_transcripts=True, recycle_augs=True):
     desc = 'Transcribing audio'
 
     transcriber.get_whisper()
@@ -87,7 +87,7 @@ def transcribe_all(all_data: list, use_cache_transcripts=True):
             raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {fp}')
 
         # detect augmentation
-        m = re.match(r'(.+)_aug\d+$', fp.stem)
+        m = re.match(r'(.+)_aug\d+$', fp.stem) if recycle_augs else False
 
         if m:
             # this is an augmented file → reuse base transcript
@@ -113,7 +113,7 @@ def transcribe_all(all_data: list, use_cache_transcripts=True):
 def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_linguistics=False, use_cache_semantics=True):
     desc = 'Extracting features'
 
-    for data in tqdm(all_data, desc=desc):
+    for data in (pbar := tqdm(all_data, desc=desc)):
         fp = Path(data['output'])
         question = data['question']
         transcript = data['transcript']
@@ -121,23 +121,21 @@ def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_li
         if not os.path.exists(fp):
             raise FileNotFoundError(f'Cannot extract features from nonexistent audio: {str(fp)}')
 
+        pbar.set_description('Extracting acoustics')
         acoustic_features = acoustics.extract(fp, transcript, use_cache=use_cache_acoustics, verbose=False)
+        pbar.set_description('Extracting linguistics')
         linguistic_features = linguistics.extract(fp, transcript, use_cache=use_cache_linguistics, verbose=False)
 
         base_fp = fp.with_name(
             re.sub(r'_aug\d+$', '', fp.stem) + fp.suffix
         )
         try:
-            semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics, verbose=False)
+            pbar.set_description('Extracting semantics')
+            semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics)
         except semantics.LLMParseError:
+            pbar.set_description('Recalcuating semantics')
             try:
-                # redo ASR and linguistic features from the original cleaned file for 2nd semantic features attempt
-                transcriber.get_whisper()
-                clean_transcript = transcriber.asr(base_fp, use_cache=False, verbose=False)
-                transcriber.unload_models()
-
-                linguistic_features = linguistics.extract(fp, clean_transcript, use_cache=False, verbose=False)
-                semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics, verbose=False)
+                semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics)
             except semantics.LLMParseError:
                 print(f"LLM parse still failing for {base_fp.name}. setting default semantic features. 😭")
                 semantic_features = semantics.default_semantic_features()
@@ -150,17 +148,30 @@ def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_li
         data['features'] = features
 
 # ========== STAGE 5 ========== #
-def gen_embeddings_all(all_data: list, use_cache_embeddings=True):
+def gen_embeddings_all(all_data: list, use_cache_embeddings=True, batch_size=16):
     desc = 'Generating audio embeddings'
 
     transcriber.get_hubert()
+
+    file_paths = []
+    for data in all_data:
+        fp = Path(data['output'])
+        if not fp.exists():
+            raise FileNotFoundError(f'Cannot generate embeddings: {fp}')
+        file_paths.append(fp)
+
+    # process in batches
+    embeddings_dict = transcriber.embeddings(
+        file_paths,
+        use_cache=use_cache_embeddings,
+        batch_size=batch_size,
+        tqdm_desc=desc
+    )
+
+    # attach to data
     for data in tqdm(all_data, desc=desc):
-        fp = data['output']
-
-        if not os.path.exists(fp):
-            raise FileNotFoundError(f'Cannot generate embeddings from nonexistent audio: {str(fp)}')
-
-        embeddings = transcriber.embeddings(fp, use_cache=use_cache_embeddings)
+        fp = Path(data['output'])
+        embeddings = embeddings_dict[fp]
         embeddings_np = embeddings.numpy().ravel().astype(np.float32)
         data['features'] = np.concatenate([
             data['features'],
