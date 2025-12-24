@@ -379,6 +379,7 @@ def extract(fn: Path, transcript: dict, use_cache=False, verbose=False):
     cache_file = cache.key(fn, CACHE_DIR)
     if use_cache:
         linguistics = cache.load(cache_file)
+        # print(f"[LING] Loaded from cache: {linguistics is not None}, file: {cache_file.name}")  # debug
     if linguistics is None:
         if verbose:
             print('[LING] Extracting linguistic features')
@@ -435,5 +436,5 @@ def extract(fn: Path, transcript: dict, use_cache=False, verbose=False):
             posinf=0.0,
             neginf=0.0
         )
-        cache.save(fn, linguistics)
+        cache.save(cache_file, linguistics)
     return linguistics

@@ -17,7 +17,7 @@ MODEL = 'qwen2.5:7b'
 
 DEFAULT_SEMANTIC_SCORE = 1.0
 
-def _ask(prompt: str):
+def _ask(prompt: str, model=MODEL):
     response: ChatResponse = chat(model=MODEL, messages=[
       {
         'role': 'user',
@@ -26,7 +26,7 @@ def _ask(prompt: str):
     ], options={'temperature': 0, 'top_p': 1, 'repeat_penalty': 1.0})
     return response['message']['content']
 
-def _prompt(question: str, transcript: str, features):
+def _prompt(question: str, transcript: str, features, model=MODEL):
     features_json = json.dumps(features, ensure_ascii=False, indent=2)
     prompt = f"""
 You are an expert clinical language evaluator specializing in early-stage dementia.
@@ -66,7 +66,7 @@ TRANSCRIPT:
 FEATURES:
 {features_json}
 """
-    return _ask(prompt)
+    return _ask(prompt, model)
 
 def _parse_scores(raw: str) -> list[float]:
     if "OUTPUT:" in raw:
@@ -82,7 +82,6 @@ def _parse_scores(raw: str) -> list[float]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        print("FAILED TO PARSE LLM RESPONSE.")
         raise LLMParseError(str(e))
 
     return [
@@ -298,7 +297,7 @@ feature_list = [
     }
 ]
 
-def _ask_features(question: str, transcript: dict, features: list[dict], verbose=False):
+def _ask_features(question: str, transcript: dict, features: list[dict], model=MODEL):
     sections = [
         features[0:4],
         features[4:8],
@@ -311,7 +310,7 @@ def _ask_features(question: str, transcript: dict, features: list[dict], verbose
         last_error = None
         for attempt in range(3):
             try:
-                raw = _prompt(question, transcript.get('text', ''), s)
+                raw = _prompt(question, transcript.get('text', ''), s, model)
                 return _parse_scores(raw)
             except LLMParseError as e:
                 # smth wrong with the transcript → no point retrying 3 times
@@ -337,17 +336,19 @@ def _ask_features(question: str, transcript: dict, features: list[dict], verbose
     return (lambda sc: sc[:len(feature_list)] + [DEFAULT_SEMANTIC_SCORE] * max(0, len(feature_list) - len(sc)))(
         [score for section_scores in results for score in section_scores])
 
-# ========== COMBINE EVERYTHING ========== #
+# ========== COMBINE EVERYTHING ========== #g
 
-def extract(question: str, transcript: dict, filename: Path, use_cache=False, verbose=False):
+def extract(question: str, transcript: dict, filename: Path, use_cache=False, model=MODEL, save=True):
     scores = None
     cache_file = cache.key(filename, CACHE_DIR)
     if use_cache:
         scores = cache.load(cache_file)
+        # print(f"[SEM] Loaded from cache: {scores is not None}, file: {cache_file.name}")  # debug
     if scores is None:
         # this can now raise LLMParseError
-        scores = np.array(_ask_features(question, transcript, feature_list, verbose), dtype=np.float32)
-        cache.save(cache_file, scores)
+        scores = np.array(_ask_features(question, transcript, feature_list, model), dtype=np.float32)
+        if save:
+            cache.save(cache_file, scores)
 
     return scores
 

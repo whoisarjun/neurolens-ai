@@ -12,6 +12,7 @@ import torch
 import whisper
 import numpy as np
 import soundfile as sf
+from tqdm import tqdm
 from transformers import HubertModel, Wav2Vec2FeatureExtractor
 
 from utils import cache
@@ -111,7 +112,10 @@ def asr(fp: Path, use_cache=False, verbose=False):
             best_of=1,
             beam_size=5,
             condition_on_previous_text=False,
-            initial_prompt='Um, like, you know, uh, so, basically'
+            initial_prompt='The sentence may be cut off, do not make up words to fill in the rest of the sentence. Um, like, you know, uh, so, basically',
+            no_speech_threshold=0.6,
+            logprob_threshold=1.0,
+            compression_ratio_threshold=1.8
         )
 
         if verbose:
@@ -131,30 +135,51 @@ def asr(fp: Path, use_cache=False, verbose=False):
         cache.save(cache_file, transcript)
     return transcript
 
-def embeddings(fp: Path, use_cache=False, verbose=False):
+def embeddings(file_paths: list[Path], use_cache=False, batch_size=16, tqdm_desc=''):
     hubert_model, hubert_processor = get_hubert()
 
-    emb = None
-    cache_file = cache.key(fp, EMB_CACHE_DIR)
-    if use_cache:
-        emb = cache.load(cache_file)
-    if emb is None:
-        # caculation time
-        # load audio and process
-        y, sr = librosa.load(str(fp), sr=16000, mono=True)
-        inputs = hubert_processor(y, sampling_rate=16000, return_tensors="pt")
+    results = {}
+    to_process = []
+
+    # check cache first
+    for fp in file_paths:
+        cache_file = cache.key(fp, EMB_CACHE_DIR)
+        if use_cache:
+            emb = cache.load(cache_file)
+            if emb is not None:
+                results[fp] = emb.cpu()
+                continue
+        to_process.append(fp)
+
+    # process uncached files in batches (default 16)
+    for i in tqdm(range(0, len(to_process), batch_size), desc=tqdm_desc):
+        batch_fps = to_process[i:i + batch_size]
+        batch_audios = []
+
+        for fp in batch_fps:
+            y, sr = librosa.load(str(fp), sr=16000, mono=True)
+            batch_audios.append(y)
+
+        # pad to same length
+        max_len = max(len(y) for y in batch_audios)
+        padded = [np.pad(y, (0, max_len - len(y))) for y in batch_audios]
+
+        # Process batch
+        inputs = hubert_processor(padded, sampling_rate=16000, return_tensors='pt', padding=True)
 
         if torch.cuda.is_available():
             inputs = {k: v.cuda() for k, v in inputs.items()}
 
         with torch.no_grad():
             outputs = hubert_model(**inputs)
-            # mean pool over time dimension
-            emb = outputs.last_hidden_state.mean(dim=1)
+            embs = outputs.last_hidden_state.mean(dim=1)
 
-        cache.save(cache_file, emb)
+        for fp, emb in zip(batch_fps, embs):
+            emb_cpu = emb.unsqueeze(0).cpu()
+            results[fp] = emb_cpu
+            cache.save(cache.key(fp, EMB_CACHE_DIR), emb_cpu)
 
-    return emb.cpu()
+    return results
 
 def sanitize_text(text: str, max_chars: int = 8000, max_repeat: int = 50) -> str:
     tokens = text.split()
