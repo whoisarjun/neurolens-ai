@@ -91,8 +91,11 @@ def train(
     X_train_scaled, X_val_scaled, X_test_scaled,
     y_train, y_val, y_test,
     z_train, z_val, z_test,
+    regressor, reg_criterion, reg_optimizer, scheduler,
+    classifier, cls_criterion, cls_optimizer,
     epochs_reg=50,
-    epochs_cls=50
+    epochs_cls=50,
+    verbose=True
 ):
     # create dataloaders
     train_loader = model.create_dataloader(X_train_scaled, y_train, z_train, batch_size=64)
@@ -101,15 +104,12 @@ def train(
 
     REG_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    backbone = model.new_backbone()
-
     # regression first
-    print(f"\n{BOLD}{CYAN}Phase 1: Training regressor + backbone for {epochs_reg} epochs...{RESET}")
+    if verbose:
+        print(f"\n{BOLD}{CYAN}Phase 1: Training regressor + backbone for {epochs_reg} epochs...{RESET}")
 
     best_val_mae = float('inf')
     best_reg_epoch = -1
-
-    regressor, reg_criterion, reg_optimizer, scheduler = model.new_regressor(backbone)
 
     for epoch in range(epochs_reg):
         train_loss = model.train_reg_one_epoch(train_loader, regressor, reg_criterion, reg_optimizer)
@@ -123,29 +123,31 @@ def train(
             best_val_mae = val_mae
             best_reg_epoch = epoch + 1
             model.save(REG_WEIGHTS_PATH, regressor)
-            model.save_scaler(SCALER_PATH)
             indicator = " 💾"
         else:
             indicator = ""
 
         color = GREEN if indicator else BLUE
-        print(
-            f"{color}reg epoch {epoch + 1:02d}/{epochs_reg} | "
-            f"train_loss: {train_loss:.4f} | "
-            f"val_loss: {val_loss:.4f} | "
-            f"val_mae: {val_mae:.4f} | "
-            f"val_rmse: {val_rmse:.4f}{indicator}{RESET}"
-        )
+        if verbose:
+            print(
+                f"{color}reg epoch {epoch + 1:02d}/{epochs_reg} | "
+                f"train_loss: {train_loss:.4f} | "
+                f"val_loss: {val_loss:.4f} | "
+                f"val_mae: {val_mae:.4f} | "
+                f"val_rmse: {val_rmse:.4f}{indicator}{RESET}"
+            )
 
-    print(f"\n{GREEN}🎉 Regression training complete! Best val MAE: {best_val_mae:.4f} (epoch {best_reg_epoch}){RESET}")
+        if verbose:
+            print(f"\n{GREEN}🎉 Regression training complete! Best val MAE: {best_val_mae:.4f} (epoch {best_reg_epoch}){RESET}")
 
     # reload best regression model
     model.load(REG_WEIGHTS_PATH, regressor)
 
     # classifier next
-    print(f"\n{BOLD}{CYAN}Phase 2: Training classifier head for {epochs_cls} epochs...{RESET}")
+    if verbose:
+        print(f"\n{BOLD}{CYAN}Phase 2: Training classifier head for {epochs_cls} epochs...{RESET}")
 
-    classifier, cls_criterion, cls_optimizer = model.new_classifier(backbone)
+
 
     best_val_f1 = -1.0
     best_cls_epoch = -1
@@ -172,18 +174,21 @@ def train(
             indicator = ""
 
         color = GREEN if indicator else BLUE
-        print(
-            f"{color}cls epoch {epoch + 1:02d}/{epochs_cls} | "
-            f"train_loss: {train_cls_loss:.4f} | "
-            f"val_loss: {val_cls_loss:.4f} | "
-            f"val_acc: {val_acc:.4f} | "
-            f"val_f1(macro): {val_f1:.4f}{indicator}{RESET}"
-        )
+        if verbose:
+            print(
+                f"{color}cls epoch {epoch + 1:02d}/{epochs_cls} | "
+                f"train_loss: {train_cls_loss:.4f} | "
+                f"val_loss: {val_cls_loss:.4f} | "
+                f"val_acc: {val_acc:.4f} | "
+                f"val_f1(macro): {val_f1:.4f}{indicator}{RESET}"
+            )
 
-    print(f"\n{GREEN}🎉 Classification training complete! Best val macro-F1: {best_val_f1:.4f} (epoch {best_cls_epoch}){RESET}")
+    if verbose:
+        print(f"\n{GREEN}🎉 Classification training complete! Best val macro-F1: {best_val_f1:.4f} (epoch {best_cls_epoch}){RESET}")
 
     # final test eval
-    print(f"\n{BOLD}{MAGENTA}FINAL TEST SET REPORT {RESET}")
+    if verbose:
+        print(f"\n{BOLD}{MAGENTA}FINAL TEST SET REPORT {RESET}")
 
     # Regression test (load best regressor)
     model.load(REG_WEIGHTS_PATH, regressor)
@@ -194,16 +199,17 @@ def train(
     test_loss_cls, test_acc, test_f1, test_cm = model.test_cls(test_loader, classifier, cls_criterion)
 
     # Print everything at once
-    print(f"\n{BOLD}{MAGENTA}Regression (MMSE){RESET}")
-    print(f"{MAGENTA}  test_loss: {test_loss_reg:.4f}{RESET}")
-    print(f"{MAGENTA}  test_mae:  {test_mae:.4f}{RESET}")
-    print(f"{MAGENTA}  test_rmse: {test_rmse:.4f}{RESET}")
+    if verbose:
+        print(f"\n{BOLD}{MAGENTA}Regression (MMSE){RESET}")
+        print(f"{MAGENTA}  test_loss: {test_loss_reg:.4f}{RESET}")
+        print(f"{MAGENTA}  test_mae:  {test_mae:.4f}{RESET}")
+        print(f"{MAGENTA}  test_rmse: {test_rmse:.4f}{RESET}")
 
-    print(f"\n{BOLD}{MAGENTA}Classification (Cognitive Status){RESET}")
-    print(f"{MAGENTA}  test_loss:      {test_loss_cls:.4f}{RESET}")
-    print(f"{MAGENTA}  test_acc:       {test_acc:.4f}{RESET}")
-    print(f"{MAGENTA}  test_f1(macro): {test_f1:.4f}{RESET}")
-    print(f"{MAGENTA}  test_confusion_matrix (rows=true, cols=pred):{RESET}")
+        print(f"\n{BOLD}{MAGENTA}Classification (Cognitive Status){RESET}")
+        print(f"{MAGENTA}  test_loss:      {test_loss_cls:.4f}{RESET}")
+        print(f"{MAGENTA}  test_acc:       {test_acc:.4f}{RESET}")
+        print(f"{MAGENTA}  test_f1(macro): {test_f1:.4f}{RESET}")
+        print(f"{MAGENTA}  test_confusion_matrix (rows=true, cols=pred):{RESET}")
 
     labels = model.cog_statuses
     header = "".ljust(12) + "".join(lbl.rjust(8) for lbl in labels)
@@ -212,6 +218,8 @@ def train(
     for i, lbl in enumerate(labels):
         row = lbl.ljust(12) + "".join(f"{test_cm[i, j]:8d}" for j in range(len(labels)))
         print(f"{MAGENTA}{row}{RESET}")
+
+    return test_mae, test_rmse, test_acc, test_f1, test_cm
 
 # main flow
 def main():
@@ -231,6 +239,7 @@ def main():
     # scale features (fit on train only)
     print(f"\n{BOLD}{CYAN}Fitting scaler on train data...{RESET}")
     model.fit_scaler(X_train)
+    model.save_scaler(SCALER_PATH)
 
     X_train_scaled = model.transform_features(X_train)
     X_val_scaled = model.transform_features(X_val)
@@ -249,7 +258,17 @@ def main():
 
     print(f"\n{GREEN}✓ Saved scaled features + labels to {FEATURE_DIR}{RESET}")
 
-    train(X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test, z_train, z_val, z_test)
+    backbone = model.new_backbone()
+    regressor, reg_criterion, reg_optimizer, scheduler = model.new_regressor(backbone)
+    classifier, cls_criterion, cls_optimizer = model.new_classifier(backbone)
+
+    train(
+        X_train_scaled, X_val_scaled, X_test_scaled,
+        y_train, y_val, y_test,
+        z_train, z_val, z_test,
+        regressor, reg_criterion, reg_optimizer, scheduler,
+        classifier, cls_criterion, cls_optimizer
+    )
 
 if __name__ == '__main__':
     main()

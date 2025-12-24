@@ -125,13 +125,8 @@ scaler_fitted = False
 # initialize model, loss, optimizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def new_backbone():
-    return Backbone(
-        n_acoustics=52,
-        n_linguistics=29,
-        n_semantics=18,
-        n_embeddings=1024
-    ).to(device)
+def new_backbone(n_acoustics=52, n_linguistics=29, n_semantics=18, n_embeddings=1024):
+    return Backbone(n_acoustics, n_linguistics, n_semantics, n_embeddings).to(device)
 
 def new_regressor(backbone: Backbone):
     regressor = MMSERegression(backbone)
