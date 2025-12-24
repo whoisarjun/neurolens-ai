@@ -91,8 +91,8 @@ def train(
     X_train_scaled, X_val_scaled, X_test_scaled,
     y_train, y_val, y_test,
     z_train, z_val, z_test,
-    epochs_reg=40,
-    epochs_cls=20
+    epochs_reg=50,
+    epochs_cls=50
 ):
     # create dataloaders
     train_loader = model.create_dataloader(X_train_scaled, y_train, z_train, batch_size=64)
@@ -101,34 +101,28 @@ def train(
 
     REG_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+    backbone = model.new_backbone()
+
     # regression first
     print(f"\n{BOLD}{CYAN}Phase 1: Training regressor + backbone for {epochs_reg} epochs...{RESET}")
 
     best_val_mae = float('inf')
     best_reg_epoch = -1
-    best_reg_snapshot = {
-        'val_loss': None,
-        'val_mae': None,
-        'val_rmse': None
-    }
+
+    regressor, reg_criterion, reg_optimizer, scheduler = model.new_regressor(backbone)
 
     for epoch in range(epochs_reg):
-        train_loss = model.train_reg_one_epoch(train_loader)
-        val_loss, val_mae, val_rmse = model.test_reg(val_loader)
+        train_loss = model.train_reg_one_epoch(train_loader, regressor, reg_criterion, reg_optimizer)
+        val_loss, val_mae, val_rmse = model.test_reg(val_loader, regressor, reg_criterion)
 
         # reduce learning rate if val loss plateaus
-        model.scheduler.step(val_loss)
+        scheduler.step(val_loss)
 
         # save model if validation MAE improves
         if val_mae < best_val_mae:
             best_val_mae = val_mae
             best_reg_epoch = epoch + 1
-            best_reg_snapshot = {
-                'val_loss': val_loss,
-                'val_mae': val_mae,
-                'val_rmse': val_rmse
-            }
-            model.save_reg(REG_WEIGHTS_PATH)
+            model.save(REG_WEIGHTS_PATH, regressor)
             model.save_scaler(SCALER_PATH)
             indicator = " 💾"
         else:
@@ -146,44 +140,33 @@ def train(
     print(f"\n{GREEN}🎉 Regression training complete! Best val MAE: {best_val_mae:.4f} (epoch {best_reg_epoch}){RESET}")
 
     # reload best regression model
-    model.load_reg(REG_WEIGHTS_PATH)
+    model.load(REG_WEIGHTS_PATH, regressor)
 
     # classifier next
     print(f"\n{BOLD}{CYAN}Phase 2: Training classifier head for {epochs_cls} epochs...{RESET}")
 
+    classifier, cls_criterion, cls_optimizer = model.new_classifier(backbone)
+
     best_val_f1 = -1.0
     best_cls_epoch = -1
-    best_cls_snapshot = {
-        'val_loss': None,
-        'val_acc': None,
-        'val_f1': None,
-        'val_cm': None
-    }
 
     for epoch in range(epochs_cls):
         # train classification for one epoch
-        model.classifier.train()
+        classifier.train()
         cls_losses = []
         for batch_x, _, batch_z in train_loader:
-            cls_loss = model.train_cls_step(batch_x, batch_z)
+            cls_loss = model.train_cls_step(batch_x, batch_z, classifier, cls_criterion, cls_optimizer)
             cls_losses.append(cls_loss)
 
         train_cls_loss = float(np.mean(cls_losses)) if cls_losses else float('nan')
 
         # validate classification
-        val_cls_loss, val_acc, val_f1, val_cm = model.test_cls(val_loader)
+        val_cls_loss, val_acc, val_f1, val_cm = model.test_cls(val_loader, classifier, cls_criterion)
 
         # save best by macro-F1
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
-            best_cls_epoch = epoch + 1
-            best_cls_snapshot = {
-                'val_loss': val_cls_loss,
-                'val_acc': val_acc,
-                'val_f1': val_f1,
-                'val_cm': val_cm
-            }
-            model.save_cls(CLS_WEIGHTS_PATH)
+            model.save(CLS_WEIGHTS_PATH, classifier)
             indicator = " 💾"
         else:
             indicator = ""
@@ -203,12 +186,12 @@ def train(
     print(f"\n{BOLD}{MAGENTA}FINAL TEST SET REPORT {RESET}")
 
     # Regression test (load best regressor)
-    model.load_reg(REG_WEIGHTS_PATH)
-    test_loss_reg, test_mae, test_rmse = model.test_reg(test_loader)
+    model.load(REG_WEIGHTS_PATH, regressor)
+    test_loss_reg, test_mae, test_rmse = model.test_reg(test_loader, regressor, reg_criterion)
 
     # Classification test (load best classifier)
-    model.load_cls(CLS_WEIGHTS_PATH)
-    test_loss_cls, test_acc, test_f1, test_cm = model.test_cls(test_loader)
+    model.load(CLS_WEIGHTS_PATH, classifier)
+    test_loss_cls, test_acc, test_f1, test_cm = model.test_cls(test_loader, classifier, cls_criterion)
 
     # Print everything at once
     print(f"\n{BOLD}{MAGENTA}Regression (MMSE){RESET}")
