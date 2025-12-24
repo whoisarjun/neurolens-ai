@@ -5,14 +5,15 @@ from pathlib import Path
 import joblib
 import numpy as np
 import torch
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
 # neural network:
 #   A [52 -> 64], L [29 -> 32], S [18 -> 32], E [1024 -> 16]
-#   A+L+S [144 -> 256 -> 64 -> 32 -> 1]
-class MMSERegression(nn.Module):
+#   A+L+S [144 -> 256 -> 64 -> 32 -> specific output head]
+class Backbone(nn.Module):
     def __init__(self, n_acoustics, n_linguistics, n_semantics, n_embeddings, dropout=0.3):
         super().__init__()
 
@@ -61,8 +62,7 @@ class MMSERegression(nn.Module):
             nn.Linear(64, 32),
             nn.LayerNorm(32),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(32, 1)
+            nn.Dropout(dropout)
         )
 
     def forward(self, x):
@@ -79,10 +79,33 @@ class MMSERegression(nn.Module):
 
         # concatenate and fuse (scale to mmse limit [0, 30])
         input_vec = torch.cat([acoustic_emb, linguistic_emb, semantic_emb, embeddings_emb], dim=1)
-        output = self.fusion(input_vec)
-        output_clamped = torch.clamp(output, 0, 30)
+        output = self.fusion(input_vec) # -> send to output head
 
-        return output_clamped
+        return output
+
+# mmse regression [1123 -> backbone -> 32 -> 1]
+class MMSERegression(nn.Module):
+    def __init__(self, backbone: Backbone):
+        super().__init__()
+        self.backbone = backbone
+        self.head = nn.Linear(32, 1)
+
+    def forward(self, x):
+        features = self.backbone(x)
+        output = self.head(features)
+        return torch.clamp(output, 0, 30)
+
+# cog status classification [1123 -> backbone -> 32 -> 3 logits]
+class CognitiveStatusClassification(nn.Module):
+    def __init__(self, backbone: Backbone):
+        super().__init__()
+        self.backbone = backbone
+        self.head = nn.Linear(32, 3)
+
+    def forward(self, x):
+        features = self.backbone(x)
+        output = self.head(features)
+        return output
 
 # feature scaling
 scaler = StandardScaler()
@@ -91,20 +114,28 @@ scaler_fitted = False
 # initialize model, loss, optimizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-regressor = MMSERegression(
+backbone = Backbone(
     n_acoustics=52,
     n_linguistics=29,
     n_semantics=18,
     n_embeddings=1024
 ).to(device)
-criterion = nn.HuberLoss(delta=1.5)
-optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)
+
+regressor = MMSERegression(backbone)
+classifier = CognitiveStatusClassification(backbone)
+
+reg_criterion = nn.HuberLoss(delta=1.5)
+reg_optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer,
+    reg_optimizer,
     mode='min',
     factor=0.5,
     patience=3
 )
+
+cls_criterion = nn.CrossEntropyLoss()
+cls_optimizer = torch.optim.Adam(classifier.head.parameters(), lr=1e-3, weight_decay=1e-5)
+cog_statuses = ['HC', 'MCI', 'AD']
 
 # ========== FEATURE SCALING ========== #
 
@@ -130,62 +161,62 @@ def load_scaler(fp: Path):
 # ========== DATALOADER ========== #
 
 # creates a dataloader from inputs
-# X: [N, 1123], y: [N]
-def create_dataloader(X, y, batch_size=32, shuffle=True):
+def create_dataloader(X, y, z, batch_size=32, shuffle=True):
     X = torch.tensor(X, dtype=torch.float32)
     y = torch.tensor(y, dtype=torch.float32).unsqueeze(1)
+    z = torch.tensor(z, dtype=torch.long)
 
-    dataset = TensorDataset(X, y)
+    dataset = TensorDataset(X, y, z)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     return loader
 
 # ========== TRAINING & TESTING ========== #
 
 # train one batch
-def train_step(x, y):
+def train_reg_step(x, y):
     x = x.to(device)
     y = y.to(device)
 
-    optimizer.zero_grad()
+    reg_optimizer.zero_grad()
     pred = regressor(x)
-    loss = criterion(pred, y)
+    loss = reg_criterion(pred, y)
     loss.backward()
 
     # gradient clipping just to be safe
     torch.nn.utils.clip_grad_norm_(regressor.parameters(), max_norm=1.0)
 
-    optimizer.step()
+    reg_optimizer.step()
 
     return loss.item()
 
 # train an epoch
-def train_one_epoch(loader):
+def train_reg_one_epoch(loader):
     total = 0.0
     count = 0
 
     regressor.train()
 
-    for batch_x, batch_y in loader:
-        loss = train_step(batch_x, batch_y)
+    for batch_x, batch_y, _ in loader:
+        loss = train_reg_step(batch_x, batch_y)
         total += loss
         count += 1
 
     return total / count
 
 # test with a test loader
-def test(loader):
+def test_reg(loader):
     regressor.eval()
     total_loss = 0.0
     predictions = []
     actuals = []
 
     with torch.no_grad():
-        for batch_x, batch_y in loader:
+        for batch_x, batch_y, _ in loader:
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
 
             pred = regressor(batch_x)
-            loss = criterion(pred, batch_y)
+            loss = reg_criterion(pred, batch_y)
 
             total_loss += loss.item()
             predictions.extend(pred.cpu().numpy())
@@ -195,12 +226,75 @@ def test(loader):
     rmse = np.sqrt(np.mean((np.array(predictions) - np.array(actuals)) ** 2))
     return total_loss / len(loader), mae, rmse
 
+# train one batch
+def train_cls_step(x, z):
+    x = x.to(device)
+    z = z.to(device)
+
+    cls_optimizer.zero_grad()
+    logits = classifier(x)
+    loss = cls_criterion(logits, z)
+    loss.backward()
+
+    # gradient clipping just to be safe
+    torch.nn.utils.clip_grad_norm_(classifier.head.parameters(), max_norm=1.0)
+
+    cls_optimizer.step()
+
+    return loss.item()
+
+# train an epoch
+def train_cls_one_epoch(loader):
+    total = 0.0
+    count = 0
+
+    classifier.train()
+
+    for batch_x, _, batch_z in loader:
+        loss = train_cls_step(batch_x, batch_z)
+        total += loss
+        count += 1
+
+    return total / count
+
+# test with a test loader
+def test_cls(loader):
+    classifier.eval()
+    total_loss = 0.0
+    z_true = []
+    z_pred = []
+
+    with torch.no_grad():
+        for batch_x, _, batch_z in loader:
+            batch_x = batch_x.to(device)
+            batch_z = batch_z.to(device)
+
+            logits = classifier(batch_x)
+            loss = cls_criterion(logits, batch_z)
+            total_loss += loss.item()
+
+            preds = torch.argmax(logits, dim=1)
+            z_true.extend(batch_z.cpu().tolist())
+            z_pred.extend(preds.cpu().tolist())
+
+    accuracy = accuracy_score(z_true, z_pred)
+    f1 = f1_score(z_true, z_pred, average='macro')
+    confusion = confusion_matrix(z_true, z_pred, labels=list(range(len(cog_statuses))))
+
+    return total_loss / len(loader), accuracy, f1, confusion
+
 # ========== SAVE/LOAD WEIGHTS ========== #
 
 # save weights and biases
-def save(fp: Path):
+def save_reg(fp: Path):
     torch.save(regressor.state_dict(), str(fp))
 
+def save_cls(fp: Path):
+    torch.save(classifier.state_dict(), str(fp))
+
 # load weights and biases
-def load(fp: Path):
+def load_reg(fp: Path):
     regressor.load_state_dict(torch.load(str(fp), map_location=device))
+
+def load_cls(fp: Path):
+    classifier.load_state_dict(torch.load(str(fp), map_location=device))
