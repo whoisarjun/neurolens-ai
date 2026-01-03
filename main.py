@@ -91,133 +91,67 @@ def train(
     X_train_scaled, X_val_scaled, X_test_scaled,
     y_train, y_val, y_test,
     z_train, z_val, z_test,
-    regressor, reg_criterion, reg_optimizer, scheduler,
-    classifier, cls_criterion, cls_optimizer,
-    epochs_reg=50,
-    epochs_cls=50,
+    regressor, classifier,
+    reg_criterion, cls_criterion,
+    optimizer, scheduler,
+    lam=0.5,
+    epochs=50,
     verbose=True
 ):
-    # create dataloaders
     train_loader = model.create_dataloader(X_train_scaled, y_train, z_train, batch_size=64)
     val_loader = model.create_dataloader(X_val_scaled, y_val, z_val, batch_size=64)
     test_loader = model.create_dataloader(X_test_scaled, y_test, z_test, batch_size=64)
 
-    REG_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    best_score = -float('inf')
+    best_epoch = -1
 
-    # regression first
-    if verbose:
-        print(f"\n{BOLD}{CYAN}Phase 1: Training regressor + backbone for {epochs_reg} epochs...{RESET}")
+    for epoch in range(epochs):
+        train_loss, train_mmse, train_cog = model.train_mt_one_epoch(
+            train_loader,
+            regressor, classifier,
+            reg_criterion, cls_criterion,
+            optimizer,
+            lam=lam
+        )
 
-    best_val_mae = float('inf')
-    best_reg_epoch = -1
+        val_reg_loss, val_mae, val_rmse = model.test_reg(val_loader, regressor, reg_criterion)
+        val_cls_loss, val_acc, val_f1, _ = model.test_cls(val_loader, classifier, cls_criterion)
 
-    for epoch in range(epochs_reg):
-        train_loss = model.train_reg_one_epoch(train_loader, regressor, reg_criterion, reg_optimizer)
-        val_loss, val_mae, val_rmse = model.test_reg(val_loader, regressor, reg_criterion)
+        scheduler.step(val_reg_loss)
 
-        # reduce learning rate if val loss plateaus
-        scheduler.step(val_loss)
+        # balanced model selection score: prefer low MAE + decent macro-F1
+        alpha = 2.0
+        score = (-val_mae) + alpha * val_f1
 
-        # save model if validation MAE improves
-        if val_mae < best_val_mae:
-            best_val_mae = val_mae
-            best_reg_epoch = epoch + 1
+        if score > best_score:
+            best_score = score
+            best_epoch = epoch + 1
+
+            # Save both heads (they share backbone weights anyway)
             model.save(REG_WEIGHTS_PATH, regressor)
-            indicator = " 💾"
-        else:
-            indicator = ""
-
-        color = GREEN if indicator else BLUE
-        if verbose:
-            print(
-                f"{color}reg epoch {epoch + 1:02d}/{epochs_reg} | "
-                f"train_loss: {train_loss:.4f} | "
-                f"val_loss: {val_loss:.4f} | "
-                f"val_mae: {val_mae:.4f} | "
-                f"val_rmse: {val_rmse:.4f}{indicator}{RESET}"
-            )
-
-        if verbose:
-            print(f"\n{GREEN}🎉 Regression training complete! Best val MAE: {best_val_mae:.4f} (epoch {best_reg_epoch}){RESET}")
-
-    # reload best regression model
-    model.load(REG_WEIGHTS_PATH, regressor)
-
-    # classifier next
-    if verbose:
-        print(f"\n{BOLD}{CYAN}Phase 2: Training classifier head for {epochs_cls} epochs...{RESET}")
-
-
-
-    best_val_f1 = -1.0
-    best_cls_epoch = -1
-
-    for epoch in range(epochs_cls):
-        # train classification for one epoch
-        classifier.train()
-        cls_losses = []
-        for batch_x, _, batch_z in train_loader:
-            cls_loss = model.train_cls_step(batch_x, batch_z, classifier, cls_criterion, cls_optimizer)
-            cls_losses.append(cls_loss)
-
-        train_cls_loss = float(np.mean(cls_losses)) if cls_losses else float('nan')
-
-        # validate classification
-        val_cls_loss, val_acc, val_f1, val_cm = model.test_cls(val_loader, classifier, cls_criterion)
-
-        # save best by macro-F1
-        if val_f1 > best_val_f1:
-            best_val_f1 = val_f1
             model.save(CLS_WEIGHTS_PATH, classifier)
             indicator = " 💾"
         else:
             indicator = ""
 
-        color = GREEN if indicator else BLUE
         if verbose:
+            color = GREEN if indicator else BLUE
             print(
-                f"{color}cls epoch {epoch + 1:02d}/{epochs_cls} | "
-                f"train_loss: {train_cls_loss:.4f} | "
-                f"val_loss: {val_cls_loss:.4f} | "
-                f"val_acc: {val_acc:.4f} | "
-                f"val_f1(macro): {val_f1:.4f}{indicator}{RESET}"
+                f"{color}mt epoch {epoch+1:02d}/{epochs} | "
+                f"train_total: {train_loss:.4f} (mmse {train_mmse:.4f}, cog {train_cog:.4f}) | "
+                f"val_mae: {val_mae:.3f} | val_rmse: {val_rmse:.3f} | "
+                f"val_f1: {val_f1:.3f} | val_acc: {val_acc:.3f}{indicator}{RESET}"
             )
 
     if verbose:
-        print(f"\n{GREEN}🎉 Classification training complete! Best val macro-F1: {best_val_f1:.4f} (epoch {best_cls_epoch}){RESET}")
+        print(f"\n{GREEN}🎉 Multitask training done. Best score at epoch {best_epoch}{RESET}")
 
     # final test eval
-    if verbose:
-        print(f"\n{BOLD}{MAGENTA}FINAL TEST SET REPORT {RESET}")
-
-    # Regression test (load best regressor)
     model.load(REG_WEIGHTS_PATH, regressor)
-    test_loss_reg, test_mae, test_rmse = model.test_reg(test_loader, regressor, reg_criterion)
-
-    # Classification test (load best classifier)
     model.load(CLS_WEIGHTS_PATH, classifier)
-    test_loss_cls, test_acc, test_f1, test_cm = model.test_cls(test_loader, classifier, cls_criterion)
 
-    # Print everything at once
-    if verbose:
-        print(f"\n{BOLD}{MAGENTA}Regression (MMSE){RESET}")
-        print(f"{MAGENTA}  test_loss: {test_loss_reg:.4f}{RESET}")
-        print(f"{MAGENTA}  test_mae:  {test_mae:.4f}{RESET}")
-        print(f"{MAGENTA}  test_rmse: {test_rmse:.4f}{RESET}")
-
-        print(f"\n{BOLD}{MAGENTA}Classification (Cognitive Status){RESET}")
-        print(f"{MAGENTA}  test_loss:      {test_loss_cls:.4f}{RESET}")
-        print(f"{MAGENTA}  test_acc:       {test_acc:.4f}{RESET}")
-        print(f"{MAGENTA}  test_f1(macro): {test_f1:.4f}{RESET}")
-        print(f"{MAGENTA}  test_confusion_matrix (rows=true, cols=pred):{RESET}")
-
-    labels = model.cog_statuses
-    header = "".ljust(12) + "".join(lbl.rjust(8) for lbl in labels)
-    print(f"{MAGENTA}{header}{RESET}")
-
-    for i, lbl in enumerate(labels):
-        row = lbl.ljust(12) + "".join(f"{test_cm[i, j]:8d}" for j in range(len(labels)))
-        print(f"{MAGENTA}{row}{RESET}")
+    test_reg_loss, test_mae, test_rmse = model.test_reg(test_loader, regressor, reg_criterion)
+    test_cls_loss, test_acc, test_f1, test_cm = model.test_cls(test_loader, classifier, cls_criterion)
 
     return test_mae, test_rmse, test_acc, test_f1, test_cm
 
@@ -259,16 +193,26 @@ def main():
     print(f"\n{GREEN}✓ Saved scaled features + labels to {FEATURE_DIR}{RESET}")
 
     backbone = model.new_backbone()
-    regressor, reg_criterion, reg_optimizer, scheduler = model.new_regressor(backbone)
-    classifier, cls_criterion, cls_optimizer = model.new_classifier(backbone)
+    regressor, classifier, reg_criterion, cls_criterion, optimizer, scheduler = model.new_multitask(backbone)
 
-    train(
+    test_mae, test_rmse, test_acc, test_f1, test_cm = train(
         X_train_scaled, X_val_scaled, X_test_scaled,
         y_train, y_val, y_test,
         z_train, z_val, z_test,
-        regressor, reg_criterion, reg_optimizer, scheduler,
-        classifier, cls_criterion, cls_optimizer
+        regressor, classifier,
+        reg_criterion, cls_criterion,
+        optimizer, scheduler,
+        lam=0.4,
+        epochs=50
     )
+
+    print(f"\n{BOLD}{MAGENTA}{'=' * 60}{RESET}")
+    print(f"{BOLD}{MAGENTA}FINAL TEST SET RESULTS{RESET}")
+    print(f"{BOLD}{MAGENTA}{'=' * 60}{RESET}")
+    print(f"{YELLOW}Regression → MAE: {test_mae:.3f} | RMSE: {test_rmse:.3f}{RESET}")
+    print(f"{YELLOW}Classification → Accuracy: {test_acc:.3f} | F1: {test_f1:.3f}{RESET}")
+    print(f"{CYAN}Confusion Matrix:\n{test_cm}{RESET}")
+    print(f"{BOLD}{MAGENTA}{'=' * 60}{RESET}\n")
 
 if __name__ == '__main__':
     main()

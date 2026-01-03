@@ -3,9 +3,10 @@
 from pathlib import Path
 
 import joblib
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
@@ -55,6 +56,12 @@ class Backbone(nn.Module):
             nn.Linear(in_features, 256),
             nn.LayerNorm(256),
             nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 64),
+            nn.LayerNorm(64),
+            nn.Dropout(0.3),
+            nn.Linear(64, 32),
+            nn.LayerNorm(32),
             nn.Dropout(0.3)
         )
 
@@ -81,15 +88,7 @@ class MMSERegression(nn.Module):
     def __init__(self, backbone: Backbone):
         super().__init__()
         self.backbone = backbone
-        self.net = nn.Sequential(
-            nn.Linear(256, 64),
-            nn.LayerNorm(64),
-            nn.Dropout(0.3),
-            nn.Linear(64, 32),
-            nn.LayerNorm(32),
-            nn.Dropout(0.3),
-            nn.Linear(32, 1)
-        )
+        self.net = nn.Linear(32, 1)
 
     def forward(self, x):
         features = self.backbone(x)
@@ -101,15 +100,7 @@ class CognitiveStatusClassification(nn.Module):
     def __init__(self, backbone: Backbone):
         super().__init__()
         self.backbone = backbone
-        self.net = nn.Sequential(
-            nn.Linear(256, 64),
-            nn.LayerNorm(64),
-            nn.Dropout(0.3),
-            nn.Linear(64, 32),
-            nn.LayerNorm(32),
-            nn.Dropout(0.3),
-            nn.Linear(32, 3)
-        )
+        self.net = nn.Linear(32, 3)
 
     def forward(self, x):
         features = self.backbone(x)
@@ -128,27 +119,30 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 def new_backbone(n_acoustics=52, n_linguistics=29, n_semantics=18, n_embeddings=1024):
     return Backbone(n_acoustics, n_linguistics, n_semantics, n_embeddings).to(device)
 
-def new_regressor(backbone: Backbone):
-    regressor = MMSERegression(backbone)
+def new_multitask(backbone: Backbone, lr=1e-3, weight_decay=1e-5):
+    # creates joint regressor and classifier with backbone
+    regressor = MMSERegression(backbone).to(device)
+    classifier = CognitiveStatusClassification(backbone).to(device)
 
     reg_criterion = nn.HuberLoss(delta=1.5)
-    reg_optimizer = torch.optim.Adam(regressor.parameters(), lr=1e-3, weight_decay=1e-5)
+    cls_criterion = nn.CrossEntropyLoss()
+
+    params = [
+        {'params': backbone.parameters()},
+        {'params': regressor.net.parameters()},
+        {'params': classifier.net.parameters()}
+    ]
+
+    optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        reg_optimizer,
+        optimizer,
         mode='min',
         factor=0.5,
         patience=3
     )
 
-    return regressor, reg_criterion, reg_optimizer, scheduler
-
-def new_classifier(backbone: Backbone):
-    classifier = CognitiveStatusClassification(backbone)
-
-    cls_criterion = nn.CrossEntropyLoss()
-    cls_optimizer = torch.optim.Adam(classifier.net.parameters(), lr=1e-3, weight_decay=1e-5)
-
-    return classifier, cls_criterion, cls_optimizer
+    return regressor, classifier, reg_criterion, cls_criterion, optimizer, scheduler
 
 # ========== FEATURE SCALING ========== #
 
@@ -183,7 +177,7 @@ def create_dataloader(X, y, z, batch_size=32, shuffle=True):
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     return loader
 
-# ========== TRAINING & TESTING ========== #
+# ========== TRAINING & TESTING (INDIVIDUAL) ========== #
 
 # train one batch
 def train_reg_step(x, y, regressor, reg_criterion, reg_optimizer):
@@ -294,7 +288,63 @@ def test_cls(loader, classifier, cls_criterion):
     f1 = f1_score(z_true, z_pred, average='macro')
     confusion = confusion_matrix(z_true, z_pred, labels=list(range(len(cog_statuses))))
 
+    disp = ConfusionMatrixDisplay(confusion_matrix=confusion, display_labels=list(range(len(cog_statuses))))
+    disp.plot(cmap=plt.cm.Blues)  # Use Matplotlib's colormap
+    plt.savefig('confusion_matrix.png')
+
     return total_loss / len(loader), accuracy, f1, confusion
+
+# ========== TRAINING & TESTING (MULTITASK) ========== #
+
+# train one batch
+def train_mt_step(x, y, z, regressor, classifier, reg_criterion, cls_criterion, optimizer, lam=0.5):
+    x = x.to(device)
+    y = y.to(device)
+    z = z.to(device)
+
+    optimizer.zero_grad()
+
+    pred_mmse = regressor(x)          # (B, 1)
+    logits = classifier(x)           # (B, 3)
+
+    loss_mmse = reg_criterion(pred_mmse, y)
+    loss_cog = cls_criterion(logits, z)
+
+    # custom loss: L_total = λL_mmse + (1-λ)L_cog
+    loss = lam * loss_mmse + (1.0 - lam) * loss_cog
+    loss.backward()
+
+    params = []
+    for group in optimizer.param_groups:
+        params.extend(group['params'])
+    torch.nn.utils.clip_grad_norm_(params, max_norm=1.0)
+
+    optimizer.step()
+
+    return loss.item(), loss_mmse.item(), loss_cog.item()
+
+# train an epoch
+def train_mt_one_epoch(loader, regressor, classifier, reg_criterion, cls_criterion, optimizer, lam=0.5):
+    regressor.train()
+    classifier.train()
+
+    total, total_mmse, total_cog = 0.0, 0.0, 0.0
+    count = 0
+
+    for batch_x, batch_y, batch_z in loader:
+        loss, loss_mmse, loss_cog = train_mt_step(
+            batch_x, batch_y, batch_z,
+            regressor, classifier,
+            reg_criterion, cls_criterion,
+            optimizer,
+            lam=lam
+        )
+        total += loss
+        total_mmse += loss_mmse
+        total_cog += loss_cog
+        count += 1
+
+    return total / count, total_mmse / count, total_cog / count
 
 # ========== SAVE/LOAD WEIGHTS ========== #
 

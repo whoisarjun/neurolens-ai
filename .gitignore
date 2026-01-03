@@ -49,5 +49,4 @@ data_jsons/
 cache/
 models/features/
 llm_eval/EVAL_DATA/
-cache_backup*.zip
-data_backup*.zip
+backups/
