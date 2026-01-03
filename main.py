@@ -202,7 +202,7 @@ def main():
         regressor, classifier,
         reg_criterion, cls_criterion,
         optimizer, scheduler,
-        lam=0.4,
+        lam=0.45,
         epochs=50
     )
 
