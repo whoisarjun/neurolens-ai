@@ -44,24 +44,22 @@ class Backbone(nn.Module):
             nn.Dropout(0.3)
         ) if n_semantics > 0 else lambda n: n
         self.embeddings_encoder = nn.Sequential(
-            nn.Linear(n_embeddings, 16),
-            nn.LayerNorm(16),
+            nn.Linear(n_embeddings, 64),
+            nn.LayerNorm(64),
             nn.ReLU(),
             nn.Dropout(0.3)
         ) if n_embeddings > 0 else lambda n: n
 
         # everything together
-        in_features = (64 if n_acoustics > 0 else 0) + (32 if n_linguistics > 0 else 0) + (32 if n_semantics > 0 else 0) + (16 if n_embeddings > 0 else 0)
+        in_features = (64 if n_acoustics > 0 else 0) + (32 if n_linguistics > 0 else 0) + (32 if n_semantics > 0 else 0) + (64 if n_embeddings > 0 else 0)
         self.fusion = nn.Sequential(
-            nn.Linear(in_features, 256),
-            nn.LayerNorm(256),
+            nn.Linear(in_features, 512),
+            nn.LayerNorm(512),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(256, 64),
-            nn.LayerNorm(64),
-            nn.Dropout(0.3),
-            nn.Linear(64, 32),
-            nn.LayerNorm(32),
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
             nn.Dropout(0.3)
         )
 
@@ -88,7 +86,15 @@ class MMSERegression(nn.Module):
     def __init__(self, backbone: Backbone):
         super().__init__()
         self.backbone = backbone
-        self.net = nn.Linear(32, 1)
+        self.net = nn.Sequential(
+            nn.Linear(256, 64),
+            nn.LayerNorm(64),
+            nn.Dropout(0.3),
+            nn.Linear(64, 32),
+            nn.LayerNorm(32),
+            nn.Dropout(0.3),
+            nn.Linear(32, 1)
+        )
 
     def forward(self, x):
         features = self.backbone(x)
@@ -100,7 +106,15 @@ class CognitiveStatusClassification(nn.Module):
     def __init__(self, backbone: Backbone):
         super().__init__()
         self.backbone = backbone
-        self.net = nn.Linear(32, 3)
+        self.net = nn.Sequential(
+            nn.Linear(256, 64),
+            nn.LayerNorm(64),
+            nn.Dropout(0.3),
+            nn.Linear(64, 32),
+            nn.LayerNorm(32),
+            nn.Dropout(0.3),
+            nn.Linear(32, 3)
+        )
 
     def forward(self, x):
         features = self.backbone(x)

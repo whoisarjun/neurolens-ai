@@ -12,7 +12,7 @@ ollama serve
 ```
 on a new window, run:
 ```bash
-ollama pull qwen2.5:7b
+ollama pull ministral-3:8b
 python main.py
 ```
 

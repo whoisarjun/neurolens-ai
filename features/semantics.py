@@ -13,7 +13,7 @@ from utils import cache
 CACHE_DIR = Path('cache/semantics')
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL = 'qwen2.5:7b'
+MODEL = 'ministral-3:8b'
 
 DEFAULT_SEMANTIC_SCORE = 1.0
 

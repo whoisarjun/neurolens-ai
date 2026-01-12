@@ -120,7 +120,7 @@ def train(
         scheduler.step(val_reg_loss)
 
         # balanced model selection score: prefer low MAE + decent macro-F1
-        alpha = 2.0
+        alpha = 2
         score = (-val_mae) + alpha * val_f1
 
         if score > best_score:
