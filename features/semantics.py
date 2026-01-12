@@ -18,7 +18,7 @@ MODEL = 'qwen2.5:7b'
 DEFAULT_SEMANTIC_SCORE = 1.0
 
 def _ask(prompt: str, model=MODEL):
-    response: ChatResponse = chat(model=MODEL, messages=[
+    response: ChatResponse = chat(model=model, messages=[
       {
         'role': 'user',
         'content': prompt,
@@ -296,6 +296,26 @@ feature_list = [
         }
     }
 ]
+all_features = [
+    'Semantic memory degradation',
+    'Narrative structure disintegration',
+    'Pragmatic appropriateness',
+    'Topic maintenance',
+    'Perseveration types',
+    'Disorientation types',
+    'Executive dysfunction patterns',
+    'Abstract reasoning',
+    'Semantic clustering vs fragmentation',
+    'Emotional appropriateness',
+    'Novel information content',
+    'Ambiguity & vagueness',
+    'Instruction following',
+    'Logical self-consistency',
+    'Confabulation',
+    'Clinical impression',
+    'Error type classification',
+    'Compensation strategies'
+]
 
 def _ask_features(question: str, transcript: dict, features: list[dict], model=MODEL):
     sections = [
@@ -319,6 +339,7 @@ def _ask_features(question: str, transcript: dict, features: list[dict], model=M
             except Exception as e:
                 # transient LLM/backend error → retry a few times
                 last_error = e
+                print(e)
                 continue
 
         if isinstance(last_error, LLMParseError):

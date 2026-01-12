@@ -59,6 +59,7 @@ def extract(question, transcript, base_fp, model):
     try:
         semantic_features = semantics.extract(question, transcript, base_fp, use_cache=False, model=model)
     except semantics.LLMParseError:
+        print('PARSE ERROR')
         try:
             semantic_features = semantics.extract(question, transcript, base_fp, use_cache=False, model=model)
         except semantics.LLMParseError:
@@ -71,7 +72,7 @@ def main():
         if p.suffix.lower() in AUDIO_EXTS and p.is_file()
     ])]
     print(f'\n{BOLD}{CYAN}Transcribing evaluation data...{RESET}')
-    pipeline.transcribe_all(data, use_cache_transcripts=True, recycle_augs=False)
+    pipeline.transcrlmiibe_all(data, use_cache_transcripts=True, recycle_augs=False)
     print(f'{BOLD}{GREEN}Done transcribing evaluation data ✓{RESET}')
 
     for d in tqdm(data, desc='Progress: ', position=0):

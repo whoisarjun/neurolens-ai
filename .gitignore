@@ -49,4 +49,6 @@ data_jsons/
 cache/
 models/features/
 llm_eval/EVAL_DATA/
+llm_eval/models/features/
+llm_eval/human_eval/
 backups/
