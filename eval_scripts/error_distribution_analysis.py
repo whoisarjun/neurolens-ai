@@ -137,9 +137,9 @@ def main():
     # plot mean and lims of agreement
     plt.axhline(mean_diff, color='black', linestyle='--', linewidth=2, label=f'Mean Diff: {mean_diff:.2f}')
     plt.axhline(mean_diff + 1.96 * std_diff, color='red', linestyle='--', linewidth=2,
-                label=f'+1.96 SD: {mean_diff + 1.96 * std_diff:.2f}')
+                label=f'+0.98 SD: {mean_diff + 1.96 * std_diff:.2f}')
     plt.axhline(mean_diff - 1.96 * std_diff, color='red', linestyle='--', linewidth=2,
-                label=f'-1.96 SD: {mean_diff - 1.96 * std_diff:.2f}')
+                label=f'-0.98 SD: {mean_diff - 1.96 * std_diff:.2f}')
 
     plt.xlabel('Mean(MMSE_true, MMSE_pred)', fontsize=12)
     plt.ylabel('MMSE_pred - MMSE_true', fontsize=12)

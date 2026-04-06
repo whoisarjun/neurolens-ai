@@ -4,6 +4,8 @@
 ```bash
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
+# Optional (needed for richer Mandarin POS/syntax features):
+python -m spacy download zh_core_web_sm
 ```
 on a separate window, run:
 ```bash
@@ -117,6 +119,25 @@ model.save_scaler('test/model_scaler.pkl')
 model.load('test/model_weights.pth')
 model.load_scaler('test/model_scaler.pkl')
 ```
+---
+## Language Field (for multilingual runs)
+Each item in `data_jsons/*.json` can include a `language` key:
+
+```json
+{
+  "question": "请描述你在图片里看到的一切。",
+  "input": "DATA/MANDARIN/train/sample_001.wav",
+  "output": "CLEANED_DATA/MANDARIN/train/sample_001.wav",
+  "mmse": 24.0,
+  "diagnosis": "MCI",
+  "language": "zh"
+}
+```
+
+If `language` is missing, the pipeline defaults to `"en"`.
+
+Supported aliases include `en`, `english`, `zh`, `mandarin`, `zh-CN`, and `cmn`.
+
 ---
 ### Thanks to:
 Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014).

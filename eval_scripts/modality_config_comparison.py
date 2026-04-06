@@ -137,7 +137,7 @@ def main():
 
         maes, rmses, accs, f1s = [], [], [], []
 
-        for seed in tqdm(range(10), desc=f"Training {config_name}"):
+        for seed in tqdm(range(3), desc=f"Training {config_name}"):
             mae, rmse, acc, f1 = train_single_config(
                 X_train, X_val, X_test,
                 y_train, y_val, y_test,

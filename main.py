@@ -20,8 +20,10 @@ CYAN = '\033[36m'
 MAGENTA = '\033[35m'
 BOLD = '\033[1m'
 
-torch.backends.cudnn.enabled = False
-torch.backends.cudnn.benchmark = False
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
 TRAIN_JSON = Path('data_jsons/train.json')
 VAL_JSON = Path('data_jsons/val.json')
