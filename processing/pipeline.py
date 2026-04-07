@@ -14,6 +14,7 @@ from tqdm import tqdm
 from features import acoustics, linguistics, semantics
 from ml import augmentation
 from processing import cleanup, transcriber
+from utils.language import normalize_language
 
 # ansi color codes
 RESET = "\033[0m"
@@ -78,10 +79,12 @@ def transcribe_all(all_data: list, use_cache_transcripts=True, recycle_augs=True
     desc = 'Transcribing audio'
 
     transcriber.get_whisper()
-    transcript_cache = {}  # base_fp -> transcript
+    transcript_cache = {}  # (base_fp, language) -> transcript
 
     for data in tqdm(all_data, desc=desc):
         fp = Path(data['output'])
+        language = normalize_language(data.get('language'))
+        data['language'] = language
 
         if not fp.exists():
             raise FileNotFoundError(f'Cannot transcribe nonexistent audio: {fp}')
@@ -92,20 +95,25 @@ def transcribe_all(all_data: list, use_cache_transcripts=True, recycle_augs=True
         if m:
             # this is an augmented file → reuse base transcript
             base_fp = fp.with_name(m.group(1) + fp.suffix)
+            cache_key = (base_fp, language)
 
-            if base_fp not in transcript_cache:
+            if cache_key not in transcript_cache:
                 raise RuntimeError(
                     f'Base transcript missing for {fp.name}. '
                     f'Make sure base files come before augmentations.'
                 )
 
-            data['transcript'] = transcript_cache[base_fp]
+            data['transcript'] = transcript_cache[cache_key]
 
         else:
             # base file → do ASR once
-            transcript = transcriber.asr(fp, use_cache=use_cache_transcripts)
+            transcript = transcriber.asr(
+                fp,
+                use_cache=use_cache_transcripts,
+                language=language
+            )
             data['transcript'] = transcript
-            transcript_cache[fp] = transcript
+            transcript_cache[(fp, language)] = transcript
 
     transcriber.unload_models()
 
@@ -117,6 +125,8 @@ def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_li
         fp = Path(data['output'])
         question = data['question']
         transcript = data['transcript']
+        language = normalize_language(data.get('language', transcript.get('language')))
+        data['language'] = language
 
         if not os.path.exists(fp):
             raise FileNotFoundError(f'Cannot extract features from nonexistent audio: {str(fp)}')
@@ -124,7 +134,13 @@ def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_li
         pbar.set_description('Extracting acoustics')
         acoustic_features = acoustics.extract(fp, transcript, use_cache=use_cache_acoustics, verbose=False)
         pbar.set_description('Extracting linguistics')
-        linguistic_features = linguistics.extract(fp, transcript, use_cache=use_cache_linguistics, verbose=False)
+        linguistic_features = linguistics.extract(
+            fp,
+            transcript,
+            use_cache=use_cache_linguistics,
+            verbose=False,
+            language=language
+        )
 
         base_fp = fp.with_name(
             re.sub(r'_aug\d+$', '', fp.stem) + fp.suffix

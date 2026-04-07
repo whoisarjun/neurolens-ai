@@ -99,6 +99,12 @@ This document lists **all feature types** extracted by this stage of the Neurole
 | 28 | Discourse coherence       | Global coherence drift   | How much speaker drifts from initial topic   |
 | 29 | Discourse coherence       | Topic recurrence         | How often main topics are revisited          |
 
+For multilingual runs, feature indices remain unchanged. For `language="zh"`, a Mandarin-specific pipeline is used:
+- tokenization/POS/syntax use `jieba` + optional `zh_core_web_sm`
+- coherence uses multilingual sentence embeddings
+- feature #25 uses a Chinese readability proxy (instead of Flesch-Kincaid)
+- feature #26 uses pinyin syllable counts per token
+
 ---
 
 ## 🧠 LLM Semantic Scores (18)

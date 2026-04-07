@@ -16,6 +16,12 @@ from tqdm import tqdm
 from transformers import HubertModel, Wav2Vec2FeatureExtractor
 
 from utils import cache
+from utils.language import normalize_language
+
+try:
+    from pypinyin import lazy_pinyin
+except Exception:  # pragma: no cover - optional dependency
+    lazy_pinyin = None
 
 # Ignore this specific memory warning
 warnings.filterwarnings(
@@ -39,6 +45,21 @@ EMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 model = None
 hubert_processor = None
 hubert_model = None
+
+EN_INITIAL_PROMPT = (
+    'The sentence may be cut off, do not make up words to fill in the rest '
+    'of the sentence. Um, like, you know, uh, so, basically'
+)
+ZH_INITIAL_PROMPT = (
+    '句子可能被截断，不要补全不存在的词语。'
+    '保留原话中的停顿词，如 嗯、呃、那个、这个、就是、然后。'
+)
+
+EN_FILLER_PATTERN = re.compile(
+    r'\b(um+|uh+|er+|ah+|like|you know|so|actually|basically|literally)\b',
+    re.IGNORECASE
+)
+ZH_FILLER_PATTERN = re.compile(r'(嗯+|呃+|额+|啊+|那个|这个|就是|然后)')
 
 def normalize_audio(fp: Path):
     try:
@@ -93,11 +114,28 @@ def unload_models():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def asr(fp: Path, use_cache=False, verbose=False):
+def _count_fillers(text: str, language: str) -> int:
+    if language == 'zh':
+        return len(ZH_FILLER_PATTERN.findall(text))
+    return len(EN_FILLER_PATTERN.findall(text.lower()))
+
+def _text_to_pinyin(text: str) -> str | None:
+    if lazy_pinyin is None:
+        return None
+    if not text:
+        return ''
+    try:
+        return ' '.join(lazy_pinyin(text))
+    except Exception:
+        return None
+
+def asr(fp: Path, use_cache=False, verbose=False, language='en'):
     model = get_whisper()
+    lang = normalize_language(language)
 
     transcript = None
-    cache_file = cache.key(fp, ASR_CACHE_DIR)
+    cache_variant = None if lang == 'en' else f'asr:{lang}'
+    cache_file = cache.key(fp, ASR_CACHE_DIR, variant=cache_variant)
     if use_cache:
         transcript = cache.load(cache_file)
     if transcript is None:
@@ -106,13 +144,13 @@ def asr(fp: Path, use_cache=False, verbose=False):
 
         result = model.transcribe(
             str(fp),
-            language='en',
+            language=lang,
             task='transcribe',
             temperature=0.0,
             best_of=1,
             beam_size=5,
             condition_on_previous_text=False,
-            initial_prompt='The sentence may be cut off, do not make up words to fill in the rest of the sentence. Um, like, you know, uh, so, basically',
+            initial_prompt=ZH_INITIAL_PROMPT if lang == 'zh' else EN_INITIAL_PROMPT,
             no_speech_threshold=0.6,
             logprob_threshold=1.0,
             compression_ratio_threshold=1.8
@@ -130,9 +168,14 @@ def asr(fp: Path, use_cache=False, verbose=False):
                 'start': s.get('start'),
                 'end': s.get('end')
             } for s in result.get('segments')],
-            'fillers': len(re.findall(r'\b(um+|uh+|er+|ah+|like|you know|so|actually|basically|literally)\b', result.get('text').lower()))
+            'fillers': _count_fillers(result.get('text', ''), lang),
+            'language': lang,
         }
+        if lang == 'zh':
+            transcript['text_pinyin'] = _text_to_pinyin(result.get('text', ''))
         cache.save(cache_file, transcript)
+    elif transcript.get('language') is None:
+        transcript['language'] = lang
     return transcript
 
 def embeddings(file_paths: list[Path], use_cache=False, batch_size=16, tqdm_desc=''):
