@@ -154,7 +154,7 @@ def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_li
                 semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics)
             except semantics.LLMParseError:
                 print(f"LLM parse still failing for {base_fp.name}. setting default semantic features. 😭")
-                semantic_features = semantics.default_semantic_features()
+                semantic_features = semantics.default_semantic_features(language=language)
 
         features = np.concatenate([
             acoustic_features,

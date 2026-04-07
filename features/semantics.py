@@ -2,32 +2,90 @@
 
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
-from ollama import chat
-from ollama import ChatResponse
+from ollama import ChatResponse, chat
 
 from utils import cache
+from utils.language import normalize_language
 
 CACHE_DIR = Path('cache/semantics')
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+FEATURE_LIST_DIR = Path(__file__).with_name('semantic_feature_lists')
 MODEL = 'ministral-3:8b'
-
 DEFAULT_SEMANTIC_SCORE = 1.0
 
 def _ask(prompt: str, model=MODEL):
-    response: ChatResponse = chat(model=model, messages=[
-      {
-        'role': 'user',
-        'content': prompt,
-      },
-    ], options={'temperature': 0, 'top_p': 1, 'repeat_penalty': 1.0})
+    response: ChatResponse = chat(
+        model=model,
+        messages=[{
+            'role': 'user',
+            'content': prompt,
+        }],
+        options={'temperature': 0, 'top_p': 1, 'repeat_penalty': 1.0}
+    )
     return response['message']['content']
 
-def _prompt(question: str, transcript: str, features, model=MODEL):
+@lru_cache(maxsize=2)
+def _load_feature_list(language: str) -> list[dict]:
+    lang = normalize_language(language)
+    path = FEATURE_LIST_DIR / f'semantic_feature_list_{lang}.json'
+    if not path.exists() and lang != 'en':
+        path = FEATURE_LIST_DIR / 'semantic_feature_list_en.json'
+
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    features = payload.get('features', [])
+    if not isinstance(features, list) or not features:
+        raise ValueError(f'Invalid semantic feature list: {path}')
+    return features
+
+def _prompt(question: str, transcript: str, features: list[dict], language: str, model=MODEL):
     features_json = json.dumps(features, ensure_ascii=False, indent=2)
+
+    if language == 'zh':
+        prompt = f"""
+你是一位专门评估早期失智语言表现的临床语言专家。
+
+你的任务：
+1. 阅读访谈问题 QUESTION。
+2. 阅读患者回答 TRANSCRIPT。
+3. 阅读待评分的 FEATURES 及其 0–4 评分标准。
+4. 对每个特征进行逐步分析，放在 REASONING 部分。
+5. 最后在 OUTPUT 部分只返回一个符合 schema 的 JSON 对象。
+
+规则：
+- 不要使用 markdown。
+- 不要使用反引号。
+- 不要把内容包在 ```json 或任何代码块里。
+- JSON 后不要再添加任何额外文字。
+
+格式：
+
+REASONING:
+[在这里写出每个特征的分析]
+
+OUTPUT:
+{{
+  "scores": [
+    {{"feature": "FEATURE_NAME", "score": 0-4}},
+    ...
+  ]
+}}
+
+QUESTION:
+{question}
+
+TRANSCRIPT:
+{transcript}
+
+FEATURES:
+{features_json}
+"""
+        return _ask(prompt, model)
+
     prompt = f"""
 You are an expert clinical language evaluator specializing in early-stage dementia.
 
@@ -69,310 +127,79 @@ FEATURES:
     return _ask(prompt, model)
 
 def _parse_scores(raw: str) -> list[float]:
-    if "OUTPUT:" in raw:
-        raw = raw.split("OUTPUT:", 1)[1].strip()
+    if 'OUTPUT:' in raw:
+        raw = raw.split('OUTPUT:', 1)[1].strip()
 
-    raw = re.sub(r"^```[a-zA-Z0-9]*", "", raw).strip()
-    raw = re.sub(r"```$", "", raw).strip()
+    raw = re.sub(r'^```[a-zA-Z0-9]*', '', raw).strip()
+    raw = re.sub(r'```$', '', raw).strip()
 
     if not raw:
-        print("LLM returned no JSON.")
-        raise LLMParseError("Empty JSON payload from LLM")
+        raise LLMParseError('Empty JSON payload from LLM')
 
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise LLMParseError(str(e))
+    except json.JSONDecodeError as exc:
+        raise LLMParseError(str(exc))
 
     return [
-        float(s) if isinstance((s := item.get('score')), (int, float)) and 0 <= s <= 4
+        float(score) if isinstance(score, (int, float)) and 0 <= score <= 4
         else DEFAULT_SEMANTIC_SCORE
         for item in data['scores']
+        for score in [item.get('score')]
     ]
 
 class LLMParseError(Exception):
-    # if the llm reponse cannot be parsed after 3 tries
     pass
 
-# ========== FEATURE EXTRACTION ========== #
-
-feature_list = [
-    {
-        'name': 'Semantic Memory Degradation',
-        'description': 'Measures factual correctness, misremembering, fabricated elements, and confabulation of details.',
-        'scale': {
-            0: 'Severe factual errors, fabricated memories, impossible/confused details',
-            1: 'Frequent factual errors or misremembering concrete details',
-            2: 'Occasional errors or contradictions',
-            3: 'Mostly accurate with rare slips',
-            4: 'Fully accurate, grounded in real-world facts'
-        }
-    },
-    {
-        'name': 'Narrative Structure Disintegration',
-        'description': 'Evaluates temporal order, causal flow, and narrative organization.',
-        'scale': {
-            0: 'No temporal order, random fragments, no causal links',
-            1: 'Frequent jumps, broken timeline, major missing steps',
-            2: 'Mixed: some order but several breakdowns',
-            3: 'Mostly logical progression with minor tangents',
-            4: 'Clear temporal and causal structure'
-        }
-    },
-    {
-        'name': 'Pragmatic Appropriateness',
-        'description': 'Measures whether the patient answers the intended question with appropriate detail and tone.',
-        'scale': {
-            0: 'Totally mismatched response; irrelevant or inappropriate content',
-            1: 'Frequent mismatches; over/under explanations',
-            2: 'Mixed pragmatics; some mismatches',
-            3: 'Mostly appropriate; minor issues',
-            4: 'Fully appropriate and aligned with the question’s intent'
-        }
-    },
-    {
-        'name': 'Topic Maintenance',
-        'description': 'Ability to stay on topic without drifting into unrelated content.',
-        'scale': {
-            0: 'Constant, rapid derailment',
-            1: 'Frequent drift to unrelated topics',
-            2: 'Some drift; partially maintained topic',
-            3: 'Mostly on topic; rare drift',
-            4: 'Completely sustained topic focus'
-        }
-    },
-    {
-        'name': 'Perseveration Types',
-        'description': 'Repetitions beyond normal speech including stuck loops, intrusive details, or returning to ideas minutes later.',
-        'scale': {
-            0: 'Severe stuck loops, repeated ideas despite prompts',
-            1: 'Frequent intrusive repetition',
-            2: 'Occasional repetition',
-            3: 'Mild redundancy',
-            4: 'No noticeable perseveration'
-        }
-    },
-    {
-        'name': 'Disorientation Types',
-        'description': 'Temporal, spatial, or personal confusion detectable through inconsistencies.',
-        'scale': {
-            0: 'Severe temporal/spatial/personal confusion',
-            1: 'Frequent incorrect references',
-            2: 'Occasional confusion or mixing details',
-            3: 'Mostly oriented',
-            4: 'Fully oriented'
-        }
-    },
-    {
-        'name': 'Executive Dysfunction Patterns',
-        'description': 'Ability to follow tasks, plan, structure answers, and avoid irrelevant content.',
-        'scale': {
-            0: 'Does not follow task; chaotic, aimless answer',
-            1: 'Major task-switching failures; irrelevant answers',
-            2: 'Some executive issues',
-            3: 'Minor slips but overall intact',
-            4: 'Fully goal-directed and task-oriented'
-        }
-    },
-    {
-        'name': 'Abstract Reasoning',
-        'description': 'Ability to generalize, draw analogies, and interpret beyond literal meaning.',
-        'scale': {
-            0: 'Cannot reason abstractly; fully literal; major failures',
-            1: 'Frequent failures to generalize/abstract',
-            2: 'Mixed abstraction with some literal interpretations',
-            3: 'Mostly good abstraction; minor issues',
-            4: 'Fully capable of abstraction and generalization'
-        }
-    },
-    {
-        'name': 'Semantic Clustering vs Fragmentation',
-        'description': 'Degree of semantic cohesion between sentences.',
-        'scale': {
-            0: 'Fragmented, isolated sentences, no cohesion',
-            1: 'Frequent breaks in semantic glue',
-            2: 'Equal mix of cohesion and fragmentation',
-            3: 'Mostly cohesive with minor breaks',
-            4: 'Strong semantic clustering throughout'
-        }
-    },
-    {
-        'name': 'Emotional Appropriateness',
-        'description': 'Whether emotional tone matches the content and context.',
-        'scale': {
-            0: 'Clearly inappropriate affect (flat, paranoid, manic, etc.)',
-            1: 'Frequent mismatches in emotional tone',
-            2: 'Occasional odd affect',
-            3: 'Mostly appropriate',
-            4: 'Fully appropriate emotional expression'
-        }
-    },
-    {
-        'name': 'Novel Information Content',
-        'description': 'Amount of meaningful new information versus repetition.',
-        'scale': {
-            0: 'Almost no new information; repetitive or empty',
-            1: 'Very low information density',
-            2: 'Moderate idea density',
-            3: 'Good information density; several meaningful ideas',
-            4: 'High density; rich, detailed, informative'
-        }
-    },
-    {
-        'name': 'Ambiguity & Vagueness',
-        'description': 'Overuse of vague references, circular speech, and empty language.',
-        'scale': {
-            0: 'Extreme vagueness; heavily ambiguous',
-            1: 'Frequent vague references',
-            2: 'Occasional vagueness',
-            3: 'Mostly specific',
-            4: 'Clear, precise, unambiguous'
-        }
-    },
-    {
-        'name': 'Instruction Following',
-        'description': 'Accuracy in doing the task the question requires.',
-        'scale': {
-            0: 'Does not follow the question at all',
-            1: 'Frequently misinterprets or answers unrelated parts',
-            2: 'Partially follows instructions',
-            3: 'Mostly follows with minor deviations',
-            4: 'Fully follows instructions'
-        }
-    },
-    {
-        'name': 'Logical Self-Consistency',
-        'description': 'Internal contradictions within the answer.',
-        'scale': {
-            0: 'Major contradictions within the response',
-            1: 'Frequent inconsistencies or switching facts',
-            2: 'Some inconsistencies',
-            3: 'Mostly consistent',
-            4: 'Fully self-consistent'
-        }
-    },
-    {
-        'name': 'Confabulation',
-        'description': 'Invented events or plausible-but-false details stated confidently.',
-        'scale': {
-            0: 'Major, repeated invented details; fabricated stories',
-            1: 'Frequent plausible-sounding but untrue content',
-            2: 'Occasional embellishment or invented info',
-            3: 'Rare or minor exaggerations',
-            4: 'No signs of confabulation'
-        }
-    },
-    {
-        'name': 'Clinical Impression',
-        'description': 'LLM’s clinical overall severity rating based on full discourse.',
-        'scale': {
-            0: 'Strong indication of severe cognitive impairment',
-            1: 'Moderate–severe impairment',
-            2: 'Mild cognitive impairment',
-            3: 'Borderline normal with slight weaknesses',
-            4: 'Clearly cognitively intact'
-        }
-    },
-    {
-        'name': 'Error Type Classification',
-        'description': 'Global severity of linguistic, semantic, phonological, retrieval, and executive errors.',
-        'scale': {
-            0: 'Severe errors across multiple types',
-            1: 'Frequent multi-category errors',
-            2: 'Moderate errors',
-            3: 'Minor errors',
-            4: 'No notable errors'
-        }
-    },
-    {
-        'name': 'Compensation Strategies',
-        'description': 'Avoidance strategies, circumlocution, meta-comments about memory, and self-correction behaviors.',
-        'scale': {
-            0: 'Severe reliance on compensation strategies',
-            1: 'Frequent compensation cues',
-            2: 'Occasional compensation',
-            3: 'Mild compensation',
-            4: 'No noticeable compensatory behavior'
-        }
-    }
-]
-all_features = [
-    'Semantic memory degradation',
-    'Narrative structure disintegration',
-    'Pragmatic appropriateness',
-    'Topic maintenance',
-    'Perseveration types',
-    'Disorientation types',
-    'Executive dysfunction patterns',
-    'Abstract reasoning',
-    'Semantic clustering vs fragmentation',
-    'Emotional appropriateness',
-    'Novel information content',
-    'Ambiguity & vagueness',
-    'Instruction following',
-    'Logical self-consistency',
-    'Confabulation',
-    'Clinical impression',
-    'Error type classification',
-    'Compensation strategies'
-]
-
-def _ask_features(question: str, transcript: dict, features: list[dict], model=MODEL):
+def _ask_features(question: str, transcript: dict, features: list[dict], language: str, model=MODEL):
     sections = [
         features[0:4],
         features[4:8],
         features[8:12],
         features[12:15],
-        features[15:18]
+        features[15:18],
     ]
 
-    def process_section(s):
+    def process_section(section: list[dict]):
         last_error = None
-        for attempt in range(3):
+        for _ in range(3):
             try:
-                raw = _prompt(question, transcript.get('text', ''), s, model)
+                raw = _prompt(question, transcript.get('text', ''), section, language=language, model=model)
                 return _parse_scores(raw)
-            except LLMParseError as e:
-                # smth wrong with the transcript → no point retrying 3 times
-                last_error = e
+            except LLMParseError as exc:
+                last_error = exc
                 break
-            except Exception as e:
-                # transient LLM/backend error → retry a few times
-                last_error = e
-                print(e)
+            except Exception as exc:
+                last_error = exc
+                print(exc)
                 continue
 
         if isinstance(last_error, LLMParseError):
-            # propagate up so caller can react (re-ASR, etc.)
             raise last_error
 
-        # if it's some other persistent error, you can still fall back to 1/4
-        return default_semantic_features()
+        return [DEFAULT_SEMANTIC_SCORE] * len(section)
 
     results = []
-    for s in sections:
-        section_scores = process_section(s)
-        results.append(section_scores)
+    for section in sections:
+        results.extend(process_section(section))
 
-    return (lambda sc: sc[:len(feature_list)] + [DEFAULT_SEMANTIC_SCORE] * max(0, len(feature_list) - len(sc)))(
-        [score for section_scores in results for score in section_scores])
-
-# ========== COMBINE EVERYTHING ========== #g
+    return results[:len(features)] + [DEFAULT_SEMANTIC_SCORE] * max(0, len(features) - len(results))
 
 def extract(question: str, transcript: dict, filename: Path, use_cache=False, model=MODEL, save=True):
+    language = normalize_language(transcript.get('language'))
+    feature_list = _load_feature_list(language)
+    cache_variant = None if language == 'en' else f'sem:{language}'
+
     scores = None
-    cache_file = cache.key(filename, CACHE_DIR)
+    cache_file = cache.key(filename, CACHE_DIR, variant=cache_variant)
     if use_cache:
         scores = cache.load(cache_file)
-        # print(f"[SEM] Loaded from cache: {scores is not None}, file: {cache_file.name}")  # debug
     if scores is None:
-        # this can now raise LLMParseError
-        scores = np.array(_ask_features(question, transcript, feature_list, model), dtype=np.float32)
+        scores = np.array(_ask_features(question, transcript, feature_list, language=language, model=model), dtype=np.float32)
         if save:
             cache.save(cache_file, scores)
 
     return scores
 
-def default_semantic_features() -> np.array:
-    return np.full(len(feature_list), DEFAULT_SEMANTIC_SCORE, dtype=np.float32)
-
+def default_semantic_features(language: str = 'en') -> np.array:
+    return np.full(len(_load_feature_list(language)), DEFAULT_SEMANTIC_SCORE, dtype=np.float32)

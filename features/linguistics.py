@@ -153,8 +153,9 @@ def _load_concreteness(path: Path):
 
     return concreteness
 
-CONCRETENESS_EN = _load_concreteness(Path(__file__).with_name('concreteness_en.csv'))
-CONCRETENESS_ZH = _load_concreteness(Path(__file__).with_name('concreteness_zh.csv'))
+CONCRETENESS_DIR = Path(__file__).with_name('concreteness')
+CONCRETENESS_EN = _load_concreteness(CONCRETENESS_DIR / 'concreteness_en.csv')
+CONCRETENESS_ZH = _load_concreteness(CONCRETENESS_DIR / 'concreteness_zh.csv')
 
 def _split_sentences(text: str, language: str):
     text = (text or '').strip()
