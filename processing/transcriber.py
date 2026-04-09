@@ -192,35 +192,63 @@ def embeddings(file_paths: list[Path], use_cache=False, batch_size=16, tqdm_desc
             if emb is not None:
                 results[fp] = emb.cpu()
                 continue
-        to_process.append(fp)
+        y, sr = librosa.load(str(fp), sr=16000, mono=True)
+        to_process.append((fp, y, len(y) / sr))
 
-    # process uncached files in batches (default 16)
-    for i in tqdm(range(0, len(to_process), batch_size), desc=tqdm_desc):
-        batch_fps = to_process[i:i + batch_size]
-        batch_audios = []
+    # Group similar durations together so padding overhead is lower.
+    to_process.sort(key=lambda item: item[2])
 
-        for fp in batch_fps:
-            y, sr = librosa.load(str(fp), sr=16000, mono=True)
-            batch_audios.append(y)
-
-        # pad to same length
+    def run_batch(batch_items):
+        batch_fps = [fp for fp, _, _ in batch_items]
+        batch_audios = [y for _, y, _ in batch_items]
         max_len = max(len(y) for y in batch_audios)
         padded = [np.pad(y, (0, max_len - len(y))) for y in batch_audios]
 
-        # Process batch
-        inputs = hubert_processor(padded, sampling_rate=16000, return_tensors='pt', padding=True)
+        inputs = hubert_processor(
+            padded,
+            sampling_rate=16000,
+            return_tensors='pt',
+            padding=True
+        )
 
         if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
+            inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
 
-        with torch.no_grad():
-            outputs = hubert_model(**inputs)
-            embs = outputs.last_hidden_state.mean(dim=1)
+        try:
+            with torch.no_grad():
+                outputs = hubert_model(**inputs)
+                embs = outputs.last_hidden_state.mean(dim=1)
+        except torch.OutOfMemoryError:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if len(batch_items) == 1:
+                fp, _, duration = batch_items[0]
+                raise RuntimeError(
+                    f'HuBERT OOM for {fp.name} ({duration:.1f}s). '
+                    'Reduce audio length, free GPU memory, or force CPU execution.'
+                ) from None
+
+            mid = max(1, len(batch_items) // 2)
+            run_batch(batch_items[:mid])
+            run_batch(batch_items[mid:])
+            return
+        finally:
+            del inputs
+            if 'outputs' in locals():
+                del outputs
 
         for fp, emb in zip(batch_fps, embs):
             emb_cpu = emb.unsqueeze(0).cpu()
             results[fp] = emb_cpu
             cache.save(cache.key(fp, EMB_CACHE_DIR), emb_cpu)
+
+        del embs
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    # process uncached files in batches (default 16)
+    for i in tqdm(range(0, len(to_process), batch_size), desc=tqdm_desc):
+        run_batch(to_process[i:i + batch_size])
 
     return results
 

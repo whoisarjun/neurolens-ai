@@ -36,12 +36,36 @@ SCALER_PATH = Path('models/model_scaler.pkl')
 FEATURE_DIR = Path('models/features')
 FEATURE_DIR.mkdir(parents=True, exist_ok=True)
 
+MISSING_MMSE = np.nan
+MISSING_DIAGNOSIS = -1
+
 # load up jsons
 def load_split(json_path: Path):
     with json_path.open('r', encoding='utf-8') as f:
         payload = json.load(f)
 
     return payload['data']
+
+def parse_mmse(value, sample_name: str):
+    if value is None:
+        return MISSING_MMSE, False
+
+    try:
+        return float(value), True
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'Invalid mmse for sample "{sample_name}": {value!r}') from exc
+
+def parse_diagnosis(value, sample_name: str):
+    if value is None:
+        return MISSING_DIAGNOSIS, False
+
+    if value not in model.cog_statuses:
+        raise ValueError(
+            f'Invalid diagnosis for sample "{sample_name}": {value!r}. '
+            f'Expected one of {model.cog_statuses}.'
+        )
+
+    return model.cog_statuses.index(value), True
 
 # process split
 def process_split(json_path: Path, split_name: str, use_cache=None, augment=True):
@@ -83,16 +107,30 @@ def process_split(json_path: Path, split_name: str, use_cache=None, augment=True
     print(f'{BOLD}{GREEN}Done generating embeddings from {split_name} data ✓{RESET}')
 
     X = [d['features'] for d in data]
-    y = [d['mmse'] for d in data]
-    z = [model.cog_statuses.index(d['diagnosis']) for d in data]
+    y = []
+    z = []
+    y_mask = []
+    z_mask = []
 
-    return X, y, z
+    for data_item in data:
+        sample_name = str(data_item.get('output', data_item.get('input', 'unknown sample')))
+        mmse_value, has_mmse = parse_mmse(data_item.get('mmse'), sample_name)
+        diagnosis_value, has_diagnosis = parse_diagnosis(data_item.get('diagnosis'), sample_name)
+
+        y.append(mmse_value)
+        z.append(diagnosis_value)
+        y_mask.append(has_mmse)
+        z_mask.append(has_diagnosis)
+
+    return X, y, z, y_mask, z_mask
 
 # training with proper train/val/test split
 def train(
     X_train_scaled, X_val_scaled, X_test_scaled,
     y_train, y_val, y_test,
     z_train, z_val, z_test,
+    y_train_mask, y_val_mask, y_test_mask,
+    z_train_mask, z_val_mask, z_test_mask,
     regressor, classifier,
     reg_criterion, cls_criterion,
     optimizer, scheduler,
@@ -100,9 +138,15 @@ def train(
     epochs=50,
     verbose=True
 ):
-    train_loader = model.create_dataloader(X_train_scaled, y_train, z_train, batch_size=64)
-    val_loader = model.create_dataloader(X_val_scaled, y_val, z_val, batch_size=64)
-    test_loader = model.create_dataloader(X_test_scaled, y_test, z_test, batch_size=64)
+    train_loader = model.create_dataloader(
+        X_train_scaled, y_train, z_train, y_train_mask, z_train_mask, batch_size=64
+    )
+    val_loader = model.create_dataloader(
+        X_val_scaled, y_val, z_val, y_val_mask, z_val_mask, batch_size=64
+    )
+    test_loader = model.create_dataloader(
+        X_test_scaled, y_test, z_test, y_test_mask, z_test_mask, batch_size=64
+    )
 
     best_score = -float('inf')
     best_epoch = -1
@@ -119,11 +163,18 @@ def train(
         val_reg_loss, val_mae, val_rmse = model.test_reg(val_loader, regressor, reg_criterion)
         val_cls_loss, val_acc, val_f1, _ = model.test_cls(val_loader, classifier, cls_criterion)
 
-        scheduler.step(val_reg_loss)
+        scheduler_target = val_reg_loss if val_reg_loss is not None else train_mmse
+        if scheduler_target is not None:
+            scheduler.step(scheduler_target)
 
-        # balanced model selection score: prefer low MAE + decent macro-F1
-        alpha = 2
-        score = (-val_mae) + alpha * val_f1
+        score_parts = []
+        if val_mae is not None:
+            score_parts.append(-val_mae)
+        if val_f1 is not None:
+            score_parts.append(2 * val_f1)
+        if not score_parts:
+            raise RuntimeError('Validation split has no MMSE or diagnosis labels to score.')
+        score = sum(score_parts)
 
         if score > best_score:
             best_score = score
@@ -140,9 +191,10 @@ def train(
             color = GREEN if indicator else BLUE
             print(
                 f"{color}mt epoch {epoch+1:02d}/{epochs} | "
-                f"train_total: {train_loss:.4f} (mmse {train_mmse:.4f}, cog {train_cog:.4f}) | "
-                f"val_mae: {val_mae:.3f} | val_rmse: {val_rmse:.3f} | "
-                f"val_f1: {val_f1:.3f} | val_acc: {val_acc:.3f}{indicator}{RESET}"
+                f"train_total: {model.format_metric(train_loss)} "
+                f"(mmse {model.format_metric(train_mmse)}, cog {model.format_metric(train_cog)}) | "
+                f"val_mae: {model.format_metric(val_mae)} | val_rmse: {model.format_metric(val_rmse)} | "
+                f"val_f1: {model.format_metric(val_f1)} | val_acc: {model.format_metric(val_acc)}{indicator}{RESET}"
             )
 
     if verbose:
@@ -167,9 +219,9 @@ def main():
         'embeddings': cache.ask('audio embeddings')
     }
 
-    X_train, y_train, z_train = process_split(TRAIN_JSON, 'train', use_cache=use_cache_list, augment=True)
-    X_val, y_val, z_val = process_split(VAL_JSON, 'validation', use_cache=use_cache_list, augment=False)
-    X_test, y_test, z_test = process_split(TEST_JSON, 'test', use_cache=use_cache_list, augment=False)
+    X_train, y_train, z_train, y_train_mask, z_train_mask = process_split(TRAIN_JSON, 'train', use_cache=use_cache_list, augment=True)
+    X_val, y_val, z_val, y_val_mask, z_val_mask = process_split(VAL_JSON, 'validation', use_cache=use_cache_list, augment=False)
+    X_test, y_test, z_test, y_test_mask, z_test_mask = process_split(TEST_JSON, 'test', use_cache=use_cache_list, augment=False)
     print(f"\n{GREEN}Done processing all data!{RESET}")
 
     # scale features (fit on train only)
@@ -191,6 +243,12 @@ def main():
     np.save(FEATURE_DIR / 'z_train.npy', z_train)
     np.save(FEATURE_DIR / 'z_val.npy', z_val)
     np.save(FEATURE_DIR / 'z_test.npy', z_test)
+    np.save(FEATURE_DIR / 'y_train_mask.npy', y_train_mask)
+    np.save(FEATURE_DIR / 'y_val_mask.npy', y_val_mask)
+    np.save(FEATURE_DIR / 'y_test_mask.npy', y_test_mask)
+    np.save(FEATURE_DIR / 'z_train_mask.npy', z_train_mask)
+    np.save(FEATURE_DIR / 'z_val_mask.npy', z_val_mask)
+    np.save(FEATURE_DIR / 'z_test_mask.npy', z_test_mask)
 
     print(f"\n{GREEN}✓ Saved scaled features + labels to {FEATURE_DIR}{RESET}")
 
@@ -201,6 +259,8 @@ def main():
         X_train_scaled, X_val_scaled, X_test_scaled,
         y_train, y_val, y_test,
         z_train, z_val, z_test,
+        y_train_mask, y_val_mask, y_test_mask,
+        z_train_mask, z_val_mask, z_test_mask,
         regressor, classifier,
         reg_criterion, cls_criterion,
         optimizer, scheduler,
@@ -211,9 +271,9 @@ def main():
     print(f"\n{BOLD}{MAGENTA}{'=' * 60}{RESET}")
     print(f"{BOLD}{MAGENTA}FINAL TEST SET RESULTS{RESET}")
     print(f"{BOLD}{MAGENTA}{'=' * 60}{RESET}")
-    print(f"{YELLOW}Regression → MAE: {test_mae:.3f} | RMSE: {test_rmse:.3f}{RESET}")
-    print(f"{YELLOW}Classification → Accuracy: {test_acc:.3f} | F1: {test_f1:.3f}{RESET}")
-    print(f"{CYAN}Confusion Matrix:\n{test_cm}{RESET}")
+    print(f"{YELLOW}Regression → MAE: {model.format_metric(test_mae)} | RMSE: {model.format_metric(test_rmse)}{RESET}")
+    print(f"{YELLOW}Classification → Accuracy: {model.format_metric(test_acc)} | F1: {model.format_metric(test_f1)}{RESET}")
+    print(f"{CYAN}Confusion Matrix:\n{test_cm if test_cm is not None else 'n/a'}{RESET}")
     print(f"{BOLD}{MAGENTA}{'=' * 60}{RESET}\n")
 
 if __name__ == '__main__':

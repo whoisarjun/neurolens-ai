@@ -1,22 +1,25 @@
 # Quick evaluation script
 
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, r2_score
+from sklearn.metrics import ConfusionMatrixDisplay, r2_score
 
 from ml import model
 
-TEST_JSON = Path('data_jsons/test.json')
 REG_WEIGHTS_PATH = Path('models/model_weights_reg.pth')
 CLS_WEIGHTS_PATH = Path('models/model_weights_cls.pth')
 SCALER_PATH = Path('models/model_scaler.pkl')
 FEATURE_DIR = Path('models/features')
 EVAL_DIR = Path('eval_results')
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
+
+def compute_score(values):
+    if not values['preds']:
+        return None
+    return r2_score(np.concatenate(values['targets']), np.concatenate(values['preds']))
 
 def main():
     print("Loading test data...")
@@ -25,6 +28,8 @@ def main():
     X_test_scaled = np.load(FEATURE_DIR / 'X_test_scaled.npy')
     y_test = np.load(FEATURE_DIR / 'y_test.npy')
     z_test = np.load(FEATURE_DIR / 'z_test.npy')
+    y_test_mask = np.load(FEATURE_DIR / 'y_test_mask.npy')
+    z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy')
 
     print(f"Test samples: {len(X_test_scaled)}")
 
@@ -40,7 +45,9 @@ def main():
     model.load(CLS_WEIGHTS_PATH, classifier)
 
     # test loader
-    test_loader = model.create_dataloader(X_test_scaled, y_test, z_test, batch_size=64, shuffle=False)
+    test_loader = model.create_dataloader(
+        X_test_scaled, y_test, z_test, y_test_mask, z_test_mask, batch_size=64, shuffle=False
+    )
 
     # regression eval
     reg_criterion = torch.nn.HuberLoss(delta=1.5)
@@ -48,19 +55,20 @@ def main():
 
     # compute R^2
     regressor.eval()
-    all_preds = []
-    all_targets = []
+    reg_values = {'preds': [], 'targets': []}
     with torch.no_grad():
-        for xb, yb, _ in test_loader:
+        for xb, yb, _, y_mask, _ in test_loader:
+            if not y_mask.any():
+                continue
+            xb = xb[y_mask]
+            yb = yb[y_mask]
             xb = xb.to(model.device)
             yb = yb.to(model.device)
             preds = regressor(xb).squeeze()
-            all_preds.append(preds.cpu().numpy())
-            all_targets.append(yb.cpu().numpy())
+            reg_values['preds'].append(preds.cpu().numpy())
+            reg_values['targets'].append(yb.cpu().numpy())
 
-    all_preds = np.concatenate(all_preds)
-    all_targets = np.concatenate(all_targets)
-    r2 = r2_score(all_targets, all_preds)
+    r2 = compute_score(reg_values)
 
     # classification eval
     cls_criterion = torch.nn.CrossEntropyLoss()
@@ -70,21 +78,27 @@ def main():
     print("\n" + "=" * 60)
     print("QUICK EVALUATION RESULTS")
     print("=" * 60)
-    print(f"Regression → MAE: {mae:.3f} | RMSE: {rmse:.3f} | R²: {r2:.3f}")
-    print(f"Classification → Accuracy: {accuracy:.3f} | Macro-F1: {f1:.3f}")
+    print(
+        f"Regression → MAE: {model.format_metric(mae)} | "
+        f"RMSE: {model.format_metric(rmse)} | R²: {model.format_metric(r2)}"
+    )
+    print(f"Classification → Accuracy: {model.format_metric(accuracy)} | Macro-F1: {model.format_metric(f1)}")
     print("=" * 60)
 
     # confusion matrix
-    disp = ConfusionMatrixDisplay(
-        confusion_matrix=confusion,
-        display_labels=model.cog_statuses
-    )
-    disp.plot(cmap=plt.cm.Blues)
-    plt.title('Confusion Matrix')
-    plt.tight_layout()
-    plt.savefig(EVAL_DIR / 'confusion_matrix.png', dpi=300, bbox_inches='tight')
-    print(f"\nConfusion matrix saved to {EVAL_DIR / 'confusion_matrix.png'}")
-    plt.close()
+    if confusion is not None:
+        disp = ConfusionMatrixDisplay(
+            confusion_matrix=confusion,
+            display_labels=model.cog_statuses
+        )
+        disp.plot(cmap=plt.cm.Blues)
+        plt.title('Confusion Matrix')
+        plt.tight_layout()
+        plt.savefig(EVAL_DIR / 'confusion_matrix.png', dpi=300, bbox_inches='tight')
+        print(f"\nConfusion matrix saved to {EVAL_DIR / 'confusion_matrix.png'}")
+        plt.close()
+    else:
+        print("\nConfusion matrix skipped: no diagnosis labels in test split.")
 
 if __name__ == '__main__':
     main()
