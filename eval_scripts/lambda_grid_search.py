@@ -1,6 +1,5 @@
 # Lambda grid search script
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +14,14 @@ EVAL_DIR = Path('eval_results')
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def train_with_lambda(X_train, X_val, X_test, y_train, y_val, y_test, z_train, z_val, z_test, lam, seed):
+def train_with_lambda(
+    X_train, X_val, X_test,
+    y_train, y_val, y_test,
+    z_train, z_val, z_test,
+    y_train_mask, y_val_mask, y_test_mask,
+    z_train_mask, z_val_mask, z_test_mask,
+    lam, seed
+):
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -24,14 +30,14 @@ def train_with_lambda(X_train, X_val, X_test, y_train, y_val, y_test, z_train, z
     regressor, classifier, reg_criterion, cls_criterion, optimizer, scheduler = model.new_multitask(backbone)
 
     # dataloaders
-    train_loader = model.create_dataloader(X_train, y_train, z_train, batch_size=64)
-    val_loader = model.create_dataloader(X_val, y_val, z_val, batch_size=64, shuffle=False)
-    test_loader = model.create_dataloader(X_test, y_test, z_test, batch_size=64, shuffle=False)
+    train_loader = model.create_dataloader(X_train, y_train, z_train, y_train_mask, z_train_mask, batch_size=64)
+    val_loader = model.create_dataloader(X_val, y_val, z_val, y_val_mask, z_val_mask, batch_size=64, shuffle=False)
+    test_loader = model.create_dataloader(X_test, y_test, z_test, y_test_mask, z_test_mask, batch_size=64, shuffle=False)
 
     # train
     best_score = -float('inf')
     for epoch in range(50):
-        _ = model.train_mt_one_epoch(
+        train_stats = model.train_mt_one_epoch(
             train_loader,
             regressor, classifier,
             reg_criterion, cls_criterion,
@@ -42,10 +48,18 @@ def train_with_lambda(X_train, X_val, X_test, y_train, y_val, y_test, z_train, z
         val_reg_loss, val_mae, val_rmse = model.test_reg(val_loader, regressor, reg_criterion)
         val_cls_loss, val_acc, val_f1, _ = model.test_cls(val_loader, classifier, cls_criterion)
 
-        scheduler.step(val_reg_loss)
+        scheduler_target = val_reg_loss if val_reg_loss is not None else train_stats[1]
+        if scheduler_target is not None:
+            scheduler.step(scheduler_target)
 
-        alpha = 2.0
-        score = (-val_mae) + alpha * val_f1
+        score_parts = []
+        if val_mae is not None:
+            score_parts.append(-val_mae)
+        if val_f1 is not None:
+            score_parts.append(2.0 * val_f1)
+        if not score_parts:
+            raise RuntimeError('Validation split has no MMSE or diagnosis labels to score.')
+        score = sum(score_parts)
 
         if score > best_score:
             best_score = score
@@ -63,7 +77,14 @@ def train_with_lambda(X_train, X_val, X_test, y_train, y_val, y_test, z_train, z
     return test_mae, test_rmse, test_acc, test_f1
 
 
-def evaluate_lambda(X_train, X_val, X_test, y_train, y_val, y_test, z_train, z_val, z_test, lam):
+def evaluate_lambda(
+    X_train, X_val, X_test,
+    y_train, y_val, y_test,
+    z_train, z_val, z_test,
+    y_train_mask, y_val_mask, y_test_mask,
+    z_train_mask, z_val_mask, z_test_mask,
+    lam
+):
     maes, rmses, accs, f1s = [], [], [], []
 
     for seed in tqdm(range(10), desc=f"Lambda {lam:.2f}", leave=False):
@@ -71,6 +92,8 @@ def evaluate_lambda(X_train, X_val, X_test, y_train, y_val, y_test, z_train, z_v
             X_train, X_val, X_test,
             y_train, y_val, y_test,
             z_train, z_val, z_test,
+            y_train_mask, y_val_mask, y_test_mask,
+            z_train_mask, z_val_mask, z_test_mask,
             lam, seed
         )
         maes.append(mae)
@@ -85,7 +108,12 @@ def evaluate_lambda(X_train, X_val, X_test, y_train, y_val, y_test, z_train, z_v
 
     # calc score
     alpha = 2.0
-    score = (-avg_mae) + alpha * avg_f1
+    score_parts = []
+    if not np.isnan(avg_mae):
+        score_parts.append(-avg_mae)
+    if not np.isnan(avg_f1):
+        score_parts.append(alpha * avg_f1)
+    score = np.sum(score_parts) if score_parts else np.nan
 
     return avg_mae, avg_rmse, avg_acc, avg_f1, score
 
@@ -103,6 +131,12 @@ def main():
     z_train = np.load(FEATURE_DIR / 'z_train.npy')
     z_val = np.load(FEATURE_DIR / 'z_val.npy')
     z_test = np.load(FEATURE_DIR / 'z_test.npy')
+    y_train_mask = np.load(FEATURE_DIR / 'y_train_mask.npy')
+    y_val_mask = np.load(FEATURE_DIR / 'y_val_mask.npy')
+    y_test_mask = np.load(FEATURE_DIR / 'y_test_mask.npy')
+    z_train_mask = np.load(FEATURE_DIR / 'z_train_mask.npy')
+    z_val_mask = np.load(FEATURE_DIR / 'z_val_mask.npy')
+    z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy')
 
     all_results = []
 
@@ -120,6 +154,8 @@ def main():
             X_train, X_val, X_test,
             y_train, y_val, y_test,
             z_train, z_val, z_test,
+            y_train_mask, y_val_mask, y_test_mask,
+            z_train_mask, z_val_mask, z_test_mask,
             lam
         )
 
@@ -157,6 +193,8 @@ def main():
             X_train, X_val, X_test,
             y_train, y_val, y_test,
             z_train, z_val, z_test,
+            y_train_mask, y_val_mask, y_test_mask,
+            z_train_mask, z_val_mask, z_test_mask,
             lam
         )
 

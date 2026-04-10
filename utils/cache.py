@@ -4,9 +4,10 @@ import hashlib
 import pickle
 from pathlib import Path
 
-def key(filename: Path, cache_dir: Path):
+def key(filename: Path, cache_dir: Path, variant: str | None = None):
     head = str(filename).split('DATA/')[-1]
-    cache_key = hashlib.md5(head.encode()).hexdigest()
+    payload = f'{variant}::{head}' if variant else head
+    cache_key = hashlib.md5(payload.encode()).hexdigest()
     cache_file = cache_dir / f"{cache_key}.pkl"
     return cache_file
 

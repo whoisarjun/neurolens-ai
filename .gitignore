@@ -51,7 +51,14 @@ models/features/
 llm_eval/EVAL_DATA/
 llm_eval/models/features/
 llm_eval/human_eval/
+
+# Archives/Backups
+archives/
+*archive*.*
+*/*archive*.*
 backups/
+*backup*.*
+*/*backup*.*
 
 # Agents
 .codex/

@@ -37,7 +37,7 @@ cleanup.denoise(output_file)
 from processing import transcriber
 
 question = '<insert qn here>'
-result = transcriber.asr(output_file)
+result = transcriber.asr(output_file, language='en')  # use 'zh' for Mandarin
 ```
 ```result``` is a dictionary with the following structure
 ```json
@@ -51,9 +51,11 @@ result = transcriber.asr(output_file)
             "end": 6.7
         }, ...
     ],
-    "filler_count": 67
+    "fillers": 67,
+    "language": "en"
 }
 ```
+For Mandarin runs, transcript may also include `"text_pinyin"` when `pypinyin` is available.
 
 ## 3. extract features and form input vector
 ```python
@@ -63,7 +65,7 @@ from features import acoustics, linguistics, semantics
 
 # extract features
 acoustic_features = acoustics.extract(output_file, transcript)
-linguistic_features = linguistics.extract(transcript)
+linguistic_features = linguistics.extract(output_file, transcript, language='en')
 semantic_features = semantics.extract(question, transcript)
 embeddings = transcriber.embeddings(output_file)
 

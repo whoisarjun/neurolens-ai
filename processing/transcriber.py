@@ -16,6 +16,12 @@ from tqdm import tqdm
 from transformers import HubertModel, Wav2Vec2FeatureExtractor
 
 from utils import cache
+from utils.language import normalize_language
+
+try:
+    from pypinyin import lazy_pinyin
+except Exception:  # pragma: no cover - optional dependency
+    lazy_pinyin = None
 
 # Ignore this specific memory warning
 warnings.filterwarnings(
@@ -39,6 +45,21 @@ EMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 model = None
 hubert_processor = None
 hubert_model = None
+
+EN_INITIAL_PROMPT = (
+    'The sentence may be cut off, do not make up words to fill in the rest '
+    'of the sentence. Um, like, you know, uh, so, basically'
+)
+ZH_INITIAL_PROMPT = (
+    '句子可能被截断，不要补全不存在的词语。'
+    '保留原话中的停顿词，如 嗯、呃、那个、这个、就是、然后。'
+)
+
+EN_FILLER_PATTERN = re.compile(
+    r'\b(um+|uh+|er+|ah+|like|you know|so|actually|basically|literally)\b',
+    re.IGNORECASE
+)
+ZH_FILLER_PATTERN = re.compile(r'(嗯+|呃+|额+|啊+|那个|这个|就是|然后)')
 
 def normalize_audio(fp: Path):
     try:
@@ -93,11 +114,28 @@ def unload_models():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def asr(fp: Path, use_cache=False, verbose=False):
+def _count_fillers(text: str, language: str) -> int:
+    if language == 'zh':
+        return len(ZH_FILLER_PATTERN.findall(text))
+    return len(EN_FILLER_PATTERN.findall(text.lower()))
+
+def _text_to_pinyin(text: str) -> str | None:
+    if lazy_pinyin is None:
+        return None
+    if not text:
+        return ''
+    try:
+        return ' '.join(lazy_pinyin(text))
+    except Exception:
+        return None
+
+def asr(fp: Path, use_cache=False, verbose=False, language='en'):
     model = get_whisper()
+    lang = normalize_language(language)
 
     transcript = None
-    cache_file = cache.key(fp, ASR_CACHE_DIR)
+    cache_variant = None if lang == 'en' else f'asr:{lang}'
+    cache_file = cache.key(fp, ASR_CACHE_DIR, variant=cache_variant)
     if use_cache:
         transcript = cache.load(cache_file)
     if transcript is None:
@@ -106,13 +144,13 @@ def asr(fp: Path, use_cache=False, verbose=False):
 
         result = model.transcribe(
             str(fp),
-            language='en',
+            language=lang,
             task='transcribe',
             temperature=0.0,
             best_of=1,
             beam_size=5,
             condition_on_previous_text=False,
-            initial_prompt='The sentence may be cut off, do not make up words to fill in the rest of the sentence. Um, like, you know, uh, so, basically',
+            initial_prompt=ZH_INITIAL_PROMPT if lang == 'zh' else EN_INITIAL_PROMPT,
             no_speech_threshold=0.6,
             logprob_threshold=1.0,
             compression_ratio_threshold=1.8
@@ -130,9 +168,14 @@ def asr(fp: Path, use_cache=False, verbose=False):
                 'start': s.get('start'),
                 'end': s.get('end')
             } for s in result.get('segments')],
-            'fillers': len(re.findall(r'\b(um+|uh+|er+|ah+|like|you know|so|actually|basically|literally)\b', result.get('text').lower()))
+            'fillers': _count_fillers(result.get('text', ''), lang),
+            'language': lang,
         }
+        if lang == 'zh':
+            transcript['text_pinyin'] = _text_to_pinyin(result.get('text', ''))
         cache.save(cache_file, transcript)
+    elif transcript.get('language') is None:
+        transcript['language'] = lang
     return transcript
 
 def embeddings(file_paths: list[Path], use_cache=False, batch_size=16, tqdm_desc=''):
@@ -149,35 +192,63 @@ def embeddings(file_paths: list[Path], use_cache=False, batch_size=16, tqdm_desc
             if emb is not None:
                 results[fp] = emb.cpu()
                 continue
-        to_process.append(fp)
+        y, sr = librosa.load(str(fp), sr=16000, mono=True)
+        to_process.append((fp, y, len(y) / sr))
 
-    # process uncached files in batches (default 16)
-    for i in tqdm(range(0, len(to_process), batch_size), desc=tqdm_desc):
-        batch_fps = to_process[i:i + batch_size]
-        batch_audios = []
+    # Group similar durations together so padding overhead is lower.
+    to_process.sort(key=lambda item: item[2])
 
-        for fp in batch_fps:
-            y, sr = librosa.load(str(fp), sr=16000, mono=True)
-            batch_audios.append(y)
-
-        # pad to same length
+    def run_batch(batch_items):
+        batch_fps = [fp for fp, _, _ in batch_items]
+        batch_audios = [y for _, y, _ in batch_items]
         max_len = max(len(y) for y in batch_audios)
         padded = [np.pad(y, (0, max_len - len(y))) for y in batch_audios]
 
-        # Process batch
-        inputs = hubert_processor(padded, sampling_rate=16000, return_tensors='pt', padding=True)
+        inputs = hubert_processor(
+            padded,
+            sampling_rate=16000,
+            return_tensors='pt',
+            padding=True
+        )
 
         if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
+            inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
 
-        with torch.no_grad():
-            outputs = hubert_model(**inputs)
-            embs = outputs.last_hidden_state.mean(dim=1)
+        try:
+            with torch.no_grad():
+                outputs = hubert_model(**inputs)
+                embs = outputs.last_hidden_state.mean(dim=1)
+        except torch.OutOfMemoryError:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if len(batch_items) == 1:
+                fp, _, duration = batch_items[0]
+                raise RuntimeError(
+                    f'HuBERT OOM for {fp.name} ({duration:.1f}s). '
+                    'Reduce audio length, free GPU memory, or force CPU execution.'
+                ) from None
+
+            mid = max(1, len(batch_items) // 2)
+            run_batch(batch_items[:mid])
+            run_batch(batch_items[mid:])
+            return
+        finally:
+            del inputs
+            if 'outputs' in locals():
+                del outputs
 
         for fp, emb in zip(batch_fps, embs):
             emb_cpu = emb.unsqueeze(0).cpu()
             results[fp] = emb_cpu
             cache.save(cache.key(fp, EMB_CACHE_DIR), emb_cpu)
+
+        del embs
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    # process uncached files in batches (default 16)
+    for i in tqdm(range(0, len(to_process), batch_size), desc=tqdm_desc):
+        run_batch(to_process[i:i + batch_size])
 
     return results
 
