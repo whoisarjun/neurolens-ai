@@ -18,6 +18,7 @@ FEATURE_LIST_DIR = Path(__file__).with_name('semantic_feature_lists')
 MODEL = 'ministral-3:8b'
 DEFAULT_SEMANTIC_SCORE = 1.0
 
+
 def _ask(prompt: str, model=MODEL):
     response: ChatResponse = chat(
         model=model,

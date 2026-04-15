@@ -1,156 +1,210 @@
-# How to use Neurolens AI pipeline:
+# Neurolens AI
 
-## 0. run these in terminal
+> Multimodal speech intelligence for cognitive assessment from spontaneous spoken responses.
+
+![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
+![Status](https://img.shields.io/badge/Status-Research%20Codebase-6c757d)
+![Tasks](https://img.shields.io/badge/Tasks-MMSE%20%2B%20Diagnosis-0a7ea4)
+![Languages](https://img.shields.io/badge/Languages-English%20%2B%20Mandarin-198754)
+
+Neurolens AI is a research pipeline that turns raw speech into cognitive predictions.
+
+Given an audio recording and its prompt, the system:
+- cleans and normalizes the audio
+- transcribes speech with Whisper
+- extracts acoustic, linguistic, and LLM-scored semantic features
+- generates HuBERT audio embeddings
+- fuses everything into a multitask neural network
+- predicts both MMSE score and cognitive status (`HC`, `MCI`, `AD`)
+
+## Quick Links
+
+- [How To Use](HOW_TO_USE.md)
+- [Feature Inventory](features/FEATURES.md)
+- [Evaluation Scripts](eval_scripts/)
+- [LLM Semantic Benchmarking](llm_eval/)
+
+## Why This Project Exists
+
+Speech carries cognitive signal at more than one level:
+- vocal delivery
+- lexical choice
+- syntax
+- discourse organization
+- semantic coherence
+
+Most pipelines lean on only one or two of those.
+
+Neurolens AI is designed to model them jointly so the final predictor has access to both low-level speech behavior and higher-level clinical language structure.
+
+## What Makes It Different
+
+Neurolens AI combines four modalities in one pipeline:
+- handcrafted acoustic markers
+- handcrafted linguistic markers
+- discourse-level semantic ratings from a local LLM
+- dense self-supervised speech embeddings
+
+This produces a final feature vector of `1123` dimensions:
+- acoustics: `52`
+- linguistics: `29`
+- semantics: `18`
+- HuBERT embeddings: `1024`
+
+## Quick Start
+
+If you already have the local datasets and environment available:
+
 ```bash
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
-# Optional (needed for richer Mandarin POS/syntax features):
 python -m spacy download zh_core_web_sm
-```
-on a separate window, run:
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
 ollama serve
-```
-on a new window, run:
-```bash
 ollama pull ministral-3:8b
 python main.py
+python eval_scripts/quick_eval.py
 ```
 
-## 1. cleanup audio
-```python
-from pathlib import Path
-from processing import cleanup
+For the real workflow, expected directory layout, caches, and evaluation commands, use [HOW_TO_USE.md](HOW_TO_USE.md).
 
-input_file = Path('test/conversation.mp3')
-output_file = Path('test/out.wav')
+## Pipeline
 
-cleanup.normalize(input_file, output_file)
-cleanup.denoise(output_file)
-
-# cleaned up audio file saved to test/out.wav
+```text
+audio
+  -> cleanup
+  -> transcription
+  -> feature extraction
+     -> acoustics (52)
+     -> linguistics (29)
+     -> semantics (18)
+     -> HuBERT embeddings (1024)
+  -> feature scaling
+  -> multitask model
+     -> MMSE regression
+     -> cognitive-status classification
 ```
 
-## 2. transcribe audio
-```python
-from processing import transcriber
+## Model Overview
 
-question = '<insert qn here>'
-result = transcriber.asr(output_file, language='en')  # use 'zh' for Mandarin
-```
-```result``` is a dictionary with the following structure
-```json
-{
-    "text": "<full transcript>",
-    "duration": 67,
-    "segments": [
-        {
-            "text": "<segment 1>",
-            "start": 0,
-            "end": 6.7
-        }, ...
-    ],
-    "fillers": 67,
-    "language": "en"
-}
-```
-For Mandarin runs, transcript may also include `"text_pinyin"` when `pypinyin` is available.
+The model uses separate encoders for each modality, a shared fused backbone, and two output heads:
+- MMSE regression head
+- 3-class cognitive-status classification head
 
-## 3. extract features and form input vector
-```python
-import torch
-import numpy as np
-from features import acoustics, linguistics, semantics
+Core implementation:
+- `processing/cleanup.py`
+- `processing/transcriber.py`
+- `features/acoustics.py`
+- `features/linguistics.py`
+- `features/semantics.py`
+- `ml/model.py`
 
-# extract features
-acoustic_features = acoustics.extract(output_file, transcript)
-linguistic_features = linguistics.extract(output_file, transcript, language='en')
-semantic_features = semantics.extract(question, transcript)
-embeddings = transcriber.embeddings(output_file)
+## Current Scope
 
-# combine into input vector
-input_vector = np.concatenate([
-    acoustic_features,
-    linguistic_features,
-    semantic_features,
-    embeddings
-])
-```
-```input vector``` size: (99,)
+### Tasks
 
-## 4. load training and testing batches
-```python
-from ml import model
+- MMSE regression
+- cognitive-status classification: `HC`, `MCI`, `AD`
 
-# where input vectors are size (99,)
-X_train = np.array([input_vector_1, input_vector_2, ...])
-y_train = np.array([mmse_score_1, mmse_score_2, ...]) 
-X_test = np.array([input_vector_1, input_vector_2, ...])
-y_test = np.array([mmse_score_1, mmse_score_2, ...])
+### Language Support
 
-# scale features
-model.fit_scaled(X_train)
-X_train_scaled = model.transform_features(X_train)
-X_test_scaled = model.transform_features(X_test)
+- English
+- Mandarin
 
-# create data loader
-train_loader = model.create_dataloader(X_train_scaled, y_train)
-test_loader = model.create_dataloader(X_test_scaled, y_test)
-```
+### Datasets Used In The Local Workspace
 
-## 5. train model
-```python
-epochs = 67
-
-for epoch in range(epochs):
-    loss = model.train_one_epoch(train_loader)
-    print(f'Epoch {epoch+1} | Loss: {loss:.4f}')
-```
-
-## 6. test model and save weights & scaler
-```python
-loss, accuracy = model.test(test_loader)
-
-model.save('test/model_weights.pth')
-model.save_scaler('test/model_scaler.pkl')
-```
-
-## 7. load weights & scaler (optional)
-```python
-model.load('test/model_weights.pth')
-model.load_scaler('test/model_scaler.pkl')
-```
----
-## Language Field (for multilingual runs)
-Each item in `data_jsons/*.json` can include a `language` key:
-
-```json
-{
-  "question": "请描述你在图片里看到的一切。",
-  "input": "DATA/MANDARIN/train/sample_001.wav",
-  "output": "CLEANED_DATA/MANDARIN/train/sample_001.wav",
-  "mmse": 24.0,
-  "diagnosis": "MCI",
-  "language": "zh"
-}
-```
-
-If `language` is missing, the pipeline defaults to `"en"`.
-
-Supported aliases include `en`, `english`, `zh`, `mandarin`, `zh-CN`, and `cmn`.
-
----
-### Thanks to:
-Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014).
-Concreteness ratings for 40 thousand generally known English word lemmas.
-Behavior Research Methods, 46(3), 904–911.
-
-file: `features/concreteness.csv`
-
-### Datasets used:
 - ADReSS-IS2020
 - ADReSS-M
 - ADReSSo21
 - TAUKADIAL
 - Pitt Corpus
+- CHOU
+
+## Results
+
+The repository already contains evaluation artifacts under `eval_results/`.
+
+### MMSE Prediction Behavior
+
+![True vs Predicted MMSE](eval_results/true_vs_predicted_mmse.png)
+
+This plot shows how predicted MMSE tracks the ground-truth scores across the held-out test set.
+
+### Error Distribution
+
+![MAE Distribution](eval_results/mae_distribution.png)
+
+This visualization shows how absolute error distributes across datasets rather than reporting only one summary metric.
+
+### Classification Output
+
+![Confusion Matrix](eval_results/confusion_matrix.png)
+
+This is the saved confusion matrix for the diagnosis head on the test split.
+
+### Agreement Analysis
+
+![Bland-Altman Analysis](eval_results/bland_altman_analysis.png)
+
+The Bland-Altman plot helps inspect systematic bias and spread between predicted and true MMSE values.
+
+## Repository Layout
+
+```text
+features/        handcrafted acoustic, linguistic, and semantic features
+processing/      audio cleanup, ASR, and stage-wise batch processing
+ml/              augmentation and multitask model code
+eval_scripts/    model evaluation and ablation scripts
+llm_eval/        semantic-rubric benchmarking against humans and other LLMs
+models/          saved weights, scaler, and cached feature matrices
+data_jsons/      train/val/test metadata splits
+```
+
+## Semantic Layer
+
+The semantic branch is not just embedding-based text scoring.
+
+Neurolens uses a local LLM through Ollama to score clinically motivated discourse features such as:
+- semantic memory degradation
+- topic maintenance
+- confabulation
+- logical self-consistency
+- executive dysfunction patterns
+
+The default scorer is currently `ministral-3:8b`.
+
+## Documentation
+
+- [HOW_TO_USE.md](HOW_TO_USE.md): setup, environment, datasets, training, outputs, evaluation
+- [features/FEATURES.md](features/FEATURES.md): feature definitions and dimensions
+- `eval_scripts/`: quick evaluation, ablations, and breakdown analysis
+- `llm_eval/`: inter-LLM, intra-LLM, and human agreement analysis for semantic scoring
+
+## Support
+
+If you are trying to run or extend the project:
+- start with [HOW_TO_USE.md](HOW_TO_USE.md)
+- use the repository issue tracker for broken scripts, setup gaps, or reproducibility issues
+
+## Project Status
+
+This is a research codebase, not a packaged library or production service.
+
+Practical implications:
+- local datasets are assumed to exist already
+- several stages are optimized around cache reuse, not clean first-run UX
+- the core training and evaluation flow is usable
+- some utilities in `llm_eval/` are still experimental and need cleanup before broad reuse
+
+## Credits
+
+Concreteness resources used in this repository:
+
+Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014).  
+Concreteness ratings for 40 thousand generally known English word lemmas.  
+Behavior Research Methods, 46(3), 904-911.
+
+Xu, X., & Li, J. (2020).  
+Concreteness/abstractness ratings for two-character Chinese words in MELD-SCH.  
+PLoS ONE, 15(6), e0232133.  
+https://doi.org/10.1371/journal.pone.0232133
