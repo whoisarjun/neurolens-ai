@@ -189,9 +189,6 @@ def gen_embeddings_all(all_data: list, use_cache_embeddings=True, batch_size=16)
         fp = Path(data['output'])
         embeddings = embeddings_dict[fp]
         embeddings_np = embeddings.numpy().ravel().astype(np.float32)
-        data['features'] = np.concatenate([
-            data['features'],
-            embeddings_np
-        ])
+        data['embeddings'] = embeddings_np
 
     transcriber.unload_models()

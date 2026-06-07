@@ -1,131 +1,226 @@
-# Neurolens AI Feature Inventory
+# Feature Schema
 
-This document lists **all feature types** extracted by this stage of the Neurolens pipeline:  
-- 52 acoustic features (`acoustics.py`)  
-- 29 linguistic features (`linguistics.py`)  
-- 18 LLM-derived semantic scores (`semantics.py`)
----
+This document defines the ordered inputs produced by the Neurolens feature
+extractors. Feature order is part of the model contract: changing it requires
+regenerating caches, preprocessing artifacts, feature arrays, and weights.
 
-## 🎧 Acoustic Features (52)
+## Dimensions
 
-| #  | Category           | Feature Name             | Description                                     |
-|----|--------------------|--------------------------|-------------------------------------------------|
-| 1  | Pitch              | Mean F0                  | Average fundamental frequency                   |
-| 2  | Pitch              | STD F0                   | Variability of pitch                            |
-| 3  | Pitch              | Min F0                   | Lowest detected pitch                           |
-| 4  | Pitch              | Max F0                   | Highest detected pitch                          |
-| 5  | Pitch              | F0 IQR                   | Interquartile range of pitch                    |
-| 6  | Energy             | Mean energy              | Average loudness                                |
-| 7  | Energy             | STD energy               | Variability in loudness                         |
-| 8  | Energy             | Dynamic range            | Max energy − Min energy                         |
-| 9  | Speaking Rate      | Syllables/sec            | Estimated speech speed                          |
-| 10 | Speaking Rate      | Words/sec                | Transcript-aligned speed                        |
-| 11 | Pauses             | # pauses > X ms          | Count of long pauses                            |
-| 12 | Pauses             | Total pause duration     | Sum of all pauses                               |
-| 13 | Pauses             | Pause ratio              | pause_time / total_time                         |
-| 14 | MFCCs (1–13)       | MFCC1 mean               | Mean of coefficient 1                           |
-| 15 | MFCCs (1–13)       | MFCC1 std                | Std of coefficient 1                            |
-| 16 | MFCCs (1–13)       | MFCC2 mean               | Mean of coefficient 2                           |
-| 17 | MFCCs (1–13)       | MFCC2 std                | Std of coefficient 2                            |
-| 18 | MFCCs (1–13)       | MFCC3 mean               | Mean of coefficient 3                           |
-| 19 | MFCCs (1–13)       | MFCC3 std                | Std of coefficient 3                            |
-| 20 | MFCCs (1–13)       | MFCC4 mean               | Mean of coefficient 4                           |
-| 21 | MFCCs (1–13)       | MFCC4 std                | Std of coefficient 4                            |
-| 22 | MFCCs (1–13)       | MFCC5 mean               | Mean of coefficient 5                           |
-| 23 | MFCCs (1–13)       | MFCC5 std                | Std of coefficient 5                            |
-| 24 | MFCCs (1–13)       | MFCC6 mean               | Mean of coefficient 6                           |
-| 25 | MFCCs (1–13)       | MFCC6 std                | Std of coefficient 6                            |
-| 26 | MFCCs (1–13)       | MFCC7 mean               | Mean of coefficient 7                           |
-| 27 | MFCCs (1–13)       | MFCC7 std                | Std of coefficient 7                            |
-| 28 | MFCCs (1–13)       | MFCC8 mean               | Mean of coefficient 8                           |
-| 29 | MFCCs (1–13)       | MFCC8 std                | Std of coefficient 8                            |
-| 30 | MFCCs (1–13)       | MFCC9 mean               | Mean of coefficient 9                           |
-| 31 | MFCCs (1–13)       | MFCC9 std                | Std of coefficient 9                            |
-| 32 | MFCCs (1–13)       | MFCC10 mean              | Mean of coefficient 10                          |
-| 33 | MFCCs (1–13)       | MFCC10 std               | Std of coefficient 10                           |
-| 34 | MFCCs (1–13)       | MFCC11 mean              | Mean of coefficient 11                          |
-| 35 | MFCCs (1–13)       | MFCC11 std               | Std of coefficient 11                           |
-| 36 | MFCCs (1–13)       | MFCC12 mean              | Mean of coefficient 12                          |
-| 37 | MFCCs (1–13)       | MFCC12 std               | Std of coefficient 12                           |
-| 38 | MFCCs (1–13)       | MFCC13 mean              | Mean of coefficient 13                          |
-| 39 | MFCCs (1–13)       | MFCC13 std               | Std of coefficient 13                           |
-| 40 | Spectral Centroid  | Spectral centroid mean   | Brightness of sound                             |
-| 41 | Spectral Centroid  | Spectral centroid STD    | Variability in brightness                       |
-| 42 | Spectral Bandwidth | Spectral bandwidth mean  | Spread of frequencies                           |
-| 43 | Spectral Bandwidth | Spectral bandwidth STD   | Variability in spread                           |
-| 44 | Spectral Flux      | Spectral flux mean       | Average frame-to-frame change in spectral shape |
-| 45 | Spectral Flux      | Spectral flux STD        | Variability of spectral change across frames    |
-| 46 | Spectral Slope     | Spectral slope           | Balance of low vs high frequencies              |
-| 47 | Voice Quality      | Jitter                   | Cycle-to-cycle frequency instability of voice   |
-| 48 | Voice Quality      | Shimmer                  | Cycle-to-cycle amplitude instability of voice   |
-| 49 | Voice Quality      | Harmonics-to-noise ratio | Clarity vs breathiness                          |
-| 50 | Voice Quality      | Cepstral peak prominence | Robustness of voiced periodicity                |
-| 51 | Voice Quality      | Zero-crossing rate mean  | Articulation/noise activity level               |
-| 52 | Voice Quality      | Zero-crossing rate STD   | Variability in zero-crossing rate over time     |
+| Block | Extracted dimensions | Model dimensions |
+|---|---:|---:|
+| Acoustic | 52 | 52 |
+| Linguistic | 29 | 29 |
+| Semantic | 18 | 18 |
+| HuBERT | 1024 | 128 after standardization and PCA |
+| **Total** | **1123** | **227** |
 
----
+The 99 acoustic, linguistic, and semantic values are standardized together.
+The HuBERT block is standardized separately and projected to 128 principal
+components. Both scalers and PCA are fitted on training data only.
 
-## ✍️ Linguistic Features (29)
+## Acoustic Features
 
-| #  | Category                  | Feature Name             | Description                                  |
-|----|---------------------------|--------------------------|----------------------------------------------|
-| 1  | Basic Text Stats          | Total tokens             | Total number of tokens in transcript         |
-| 2  | Basic Text Stats          | Unique tokens            | Number of unique vocabulary items            |
-| 3  | Basic Text Stats          | Type–token ratio         | unique / total tokens                        |
-| 4  | Basic Text Stats          | Mean words per utterance | Avg. words per Whisper segment               |
-| 5  | Basic Text Stats          | Max utterance length     | Longest utterance in words                   |
-| 6  | Basic Text Stats          | Number of sentences      | Approx. sentence count                       |
-| 7  | Lexical Richness          | Content-word ratio       | (nouns + verbs + adj + adv) / total          |
-| 8  | Lexical Richness          | Function-word ratio      | function words / total                       |
-| 9  | Lexical Richness          | Rare-word ratio          | rare words / total                           |
-| 10 | Repetition & Disfluency   | Filler-word count        | Count of {"um","uh","like","you know","er"}  |
-| 11 | Repetition & Disfluency   | Repetition score         | Weighted count of repeated words/phrases     |
-| 12 | Repetition & Disfluency   | Bigram repetition ratio  | repeated bigrams / total bigrams             |
-| 13 | Repetition & Disfluency   | Self-correction count    | Count of {"sorry","I mean","no wait"}        |
-| 14 | Semantic Coherence        | Mean local coherence     | Mean cosine similarity between segments      |
-| 15 | Semantic Coherence        | Coherence variance       | Variance of consecutive-segment similarities |
-| 16 | Syntactic Complexity      | Mean dependency distance | Average word separation in grammar links     |
-| 17 | Syntactic Complexity      | Clause density           | Number of clauses per sentence               |
-| 18 | Syntactic Complexity      | Mean parse tree height   | Average sentence structure complexity        |
-| 19 | Parts-of-speech ratios    | Pronoun ratio            | How often pronouns are used vs other words   |
-| 20 | Parts-of-speech ratios    | Verb-to-noun ratio       | Balance of verbs vs nouns                    |
-| 21 | Parts-of-speech ratios    | Auxiliary verb ratio     | How often helping verbs are used             |
-| 22 | Semantic content          | Idea density             | Density of ideas expressed per word          |
-| 23 | Semantic content          | Mean concreteness        | How concrete vs abstract words are           |
-| 24 | Semantic content          | Abstract ratio           | Proportion of abstract concept words         |
-| 25 | Vocabulary sophistication | Flesch-Kincaid grade     | Text difficulty/grade level score            |
-| 26 | Vocabulary sophistication | Mean syllables           | Average syllables per word used              |
-| 27 | Vocabulary sophistication | Long word ratio          | Proportion of longer complex words           |
-| 28 | Discourse coherence       | Global coherence drift   | How much speaker drifts from initial topic   |
-| 29 | Discourse coherence       | Topic recurrence         | How often main topics are revisited          |
+Implementation: `features/acoustics.py`
 
-For multilingual runs, feature indices remain unchanged. For `language="zh"`, a Mandarin-specific pipeline is used:
-- tokenization/POS/syntax use `jieba` + optional `zh_core_web_sm`
-- coherence uses multilingual sentence embeddings
-- feature #25 uses a Chinese readability proxy (instead of Flesch-Kincaid)
-- feature #26 uses pinyin syllable counts per token
+Audio is loaded at 16 kHz. WebRTC VAD with aggressiveness level 3 identifies
+voiced 30 ms frames. A pause is counted after at least eight consecutive
+non-speech frames, corresponding to approximately 240 ms.
 
----
+| Index | Feature | Definition |
+|---:|---|---|
+| 1 | Mean F0 | Mean YIN fundamental frequency over VAD-retained audio |
+| 2 | F0 standard deviation | Standard deviation of fundamental frequency |
+| 3 | Minimum F0 | Minimum detected fundamental frequency |
+| 4 | Maximum F0 | Maximum detected fundamental frequency |
+| 5 | F0 interquartile range | 75th minus 25th percentile of F0 |
+| 6 | Mean RMS energy | Mean frame-wise root-mean-square energy |
+| 7 | RMS energy standard deviation | Variability of frame-wise RMS energy |
+| 8 | Energy dynamic range | Maximum minus minimum frame-wise RMS energy |
+| 9 | Words per second | Regex token count divided by VAD-retained duration |
+| 10 | Syllables per second | Heuristic English syllable count divided by VAD-retained duration |
+| 11 | Pause count | Number of non-speech runs lasting at least about 240 ms |
+| 12 | Total pause duration | Full duration minus VAD-retained duration |
+| 13 | Pause ratio | Total pause duration divided by full duration |
+| 14 | MFCC 1 mean | Mean of MFCC coefficient 1 |
+| 15 | MFCC 1 standard deviation | Standard deviation of MFCC coefficient 1 |
+| 16 | MFCC 2 mean | Mean of MFCC coefficient 2 |
+| 17 | MFCC 2 standard deviation | Standard deviation of MFCC coefficient 2 |
+| 18 | MFCC 3 mean | Mean of MFCC coefficient 3 |
+| 19 | MFCC 3 standard deviation | Standard deviation of MFCC coefficient 3 |
+| 20 | MFCC 4 mean | Mean of MFCC coefficient 4 |
+| 21 | MFCC 4 standard deviation | Standard deviation of MFCC coefficient 4 |
+| 22 | MFCC 5 mean | Mean of MFCC coefficient 5 |
+| 23 | MFCC 5 standard deviation | Standard deviation of MFCC coefficient 5 |
+| 24 | MFCC 6 mean | Mean of MFCC coefficient 6 |
+| 25 | MFCC 6 standard deviation | Standard deviation of MFCC coefficient 6 |
+| 26 | MFCC 7 mean | Mean of MFCC coefficient 7 |
+| 27 | MFCC 7 standard deviation | Standard deviation of MFCC coefficient 7 |
+| 28 | MFCC 8 mean | Mean of MFCC coefficient 8 |
+| 29 | MFCC 8 standard deviation | Standard deviation of MFCC coefficient 8 |
+| 30 | MFCC 9 mean | Mean of MFCC coefficient 9 |
+| 31 | MFCC 9 standard deviation | Standard deviation of MFCC coefficient 9 |
+| 32 | MFCC 10 mean | Mean of MFCC coefficient 10 |
+| 33 | MFCC 10 standard deviation | Standard deviation of MFCC coefficient 10 |
+| 34 | MFCC 11 mean | Mean of MFCC coefficient 11 |
+| 35 | MFCC 11 standard deviation | Standard deviation of MFCC coefficient 11 |
+| 36 | MFCC 12 mean | Mean of MFCC coefficient 12 |
+| 37 | MFCC 12 standard deviation | Standard deviation of MFCC coefficient 12 |
+| 38 | MFCC 13 mean | Mean of MFCC coefficient 13 |
+| 39 | MFCC 13 standard deviation | Standard deviation of MFCC coefficient 13 |
+| 40 | Spectral-centroid mean | Mean spectral centroid |
+| 41 | Spectral-centroid standard deviation | Variability of spectral centroid |
+| 42 | Spectral-bandwidth mean | Mean spectral bandwidth |
+| 43 | Spectral-bandwidth standard deviation | Variability of spectral bandwidth |
+| 44 | Spectral-flux mean | Mean onset-strength value |
+| 45 | Spectral-flux standard deviation | Variability of onset strength |
+| 46 | Spectral slope | Linear slope of the mean magnitude spectrum |
+| 47 | Jitter | Praat local period-to-period F0 variation |
+| 48 | Shimmer | Praat local period-to-period amplitude variation |
+| 49 | Harmonics-to-noise ratio | Mean Praat harmonicity |
+| 50 | Cepstral peak prominence | Praat CPPS |
+| 51 | Zero-crossing-rate mean | Mean frame-wise zero-crossing rate |
+| 52 | Zero-crossing-rate standard deviation | Variability of zero-crossing rate |
 
-## 🧠 LLM Semantic Scores (18)
+Important implementation detail: indices 9 and 10 are **words per second**
+followed by **syllables per second**. Older documentation listed these in the
+opposite order.
 
-| #  | Category                         | Feature Name                         | Description                                                           |
-|----|----------------------------------|--------------------------------------|-----------------------------------------------------------------------|
-| 1  | Semantic Understanding           | Semantic memory degradation          | Mis-remembering facts, confabulation, memory-failure signals          |
-| 2  | Semantic Understanding           | Narrative structure disintegration   | Temporal disorder, missing causal links, broken storyline             |
-| 3  | Semantic Understanding           | Pragmatic appropriateness            | Answer fits the question intent, not over/under-explained             |
-| 4  | Semantic Understanding           | Topic maintenance                    | Rate at which the speaker drifts off-topic                            |
-| 5  | Clinical Signature Behaviors     | Perseveration types                  | Stuck loops, intrusive repetition, returning to old ideas             |
-| 6  | Clinical Signature Behaviors     | Disorientation types                 | Temporal, spatial, or personal confusion                              |
-| 7  | Clinical Signature Behaviors     | Executive dysfunction patterns       | Not answering questions, filler responses, inability to plan          |
-| 8  | Clinical Signature Behaviors     | Abstract reasoning                   | Inability to generalize, overly literal answers                       |
-| 9  | Discourse-Level Signals          | Semantic clustering vs fragmentation | Sentences cluster into themes vs fragmented ideas                     |
-| 10 | Discourse-Level Signals          | Emotional appropriateness            | Emotional tone matches or mismatches content                          |
-| 11 | Discourse-Level Signals          | Novel information content            | Amount of new meaningful information per unit speech                  |
-| 12 | Discourse-Level Signals          | Ambiguity & vagueness                | Overuse of vague/empty expressions (“that thing”, “the place”)        |
-| 13 | Q/A Relationship                 | Instruction following                | Whether the answer addresses the actual question                      |
-| 14 | Q/A Relationship                 | Logical self-consistency             | Contradictions within an answer                                       |
-| 15 | Q/A Relationship                 | Confabulation                        | Plausible but fabricated details or stories                           |
-| 16 | Meta-Features                    | Clinical impression                  | LLM-estimated cognitive impairment severity                           |
-| 17 | Meta-Features                    | Error type classification            | Semantic, retrieval, syntactic, phonological, or executive errors     |
-| 18 | Meta-Features                    | Compensation strategies              | Circumlocution, avoidance, meta-comments about memory                 |
+The acoustic syllable heuristic strips non-ASCII letters and counts English
+vowel groups. It is not Mandarin-aware, even when the transcript language is
+`zh`.
+
+## Linguistic Features
+
+Implementation: `features/linguistics.py`
+
+| Index | Feature | Definition |
+|---:|---|---|
+| 1 | Total tokens | Number of language-specific word tokens |
+| 2 | Unique tokens | Number of unique tokens |
+| 3 | Type-token ratio | Unique tokens divided by total tokens |
+| 4 | Mean words per utterance | Mean token count across Whisper segments |
+| 5 | Maximum utterance length | Largest segment token count |
+| 6 | Sentence count | Number of detected sentence units |
+| 7 | Content-word ratio | Content POS tokens divided by parsed tokens |
+| 8 | Function-word ratio | Function POS tokens divided by parsed tokens |
+| 9 | Rare-word ratio | Tokens with wordfreq Zipf frequency below 3 |
+| 10 | Filler count | ASR filler count plus configured lexical fillers |
+| 11 | Repetition score | Length-weighted repeated 1- to 5-gram count per token |
+| 12 | Bigram repetition ratio | Repeated bigram occurrences divided by all bigrams |
+| 13 | Self-correction count | Count of language-specific repair markers |
+| 14 | Mean local coherence | Mean cosine similarity of adjacent sentence embeddings |
+| 15 | Local-coherence variance | Variance of adjacent-sentence cosine similarities |
+| 16 | Mean dependency distance | Mean token distance to syntactic head, or heuristic proxy |
+| 17 | Clause density | Estimated clauses per sentence |
+| 18 | Mean parse-tree height | Mean dependency-tree height, or heuristic proxy |
+| 19 | Pronoun ratio | Pronouns divided by parsed tokens |
+| 20 | Verb-to-noun ratio | Verbs divided by nouns and proper nouns |
+| 21 | Auxiliary/particle ratio | Auxiliaries and particles divided by parsed tokens |
+| 22 | Idea density | Proposition-bearing POS tokens divided by parsed tokens |
+| 23 | Mean concreteness | Mean matched concreteness score |
+| 24 | Abstract-word ratio | Matched words with concreteness below 2, divided by tokens |
+| 25 | Readability | Flesch-Kincaid grade for English; Mandarin proxy otherwise |
+| 26 | Mean syllables | Mean textstat syllables for English; pinyin/Hanzi count for Mandarin |
+| 27 | Long-word ratio | English tokens longer than six characters; Mandarin tokens with at least three Hanzi |
+| 28 | Global coherence drift | Negative slope of similarity to the first sentence |
+| 29 | Topic recurrence | Repeated top TF-IDF topics divided by sentence-topic assignments |
+
+### Language-specific behavior
+
+English uses:
+
+- spaCy `en_core_web_sm`, with `spacy.blank("en")` fallback;
+- `all-mpnet-base-v2` sentence embeddings;
+- `textstat` Flesch-Kincaid grade and syllable counts; and
+- English word-frequency and concreteness resources.
+
+Mandarin uses:
+
+- spaCy `zh_core_web_sm` when available;
+- jieba tokenization/POS fallback, then simpler heuristics;
+- `paraphrase-multilingual-mpnet-base-v2` sentence embeddings;
+- pinyin or Hanzi-based syllable counts;
+- a custom readability proxy based on sentence length and rare-word ratio; and
+- Mandarin-specific filler, repair, concreteness, and clause-marker resources.
+
+If a sentence-transformer model cannot load or encode text, coherence features
+fall back to zero. If a spaCy parser is unavailable, syntactic features use
+heuristics. These fallbacks preserve vector shape but not feature equivalence.
+
+## Semantic Features
+
+Implementation: `features/semantics.py`
+
+The semantic extractor asks a local Ollama model to assign one score per
+rubric. Scores are expected in the range 0-4. English and Mandarin use
+language-specific feature-list JSON files, but retain the same feature order.
+
+| Index | Feature | Construct represented by the rubric |
+|---:|---|---|
+| 1 | Semantic memory degradation | Fact loss, retrieval failure, or memory-related semantic errors |
+| 2 | Narrative structure disintegration | Temporal, causal, or story-structure breakdown |
+| 3 | Pragmatic appropriateness | Fit between the response and conversational intent |
+| 4 | Topic maintenance | Ability to remain on the elicited topic |
+| 5 | Perseveration types | Recurrent or intrusive repetition patterns |
+| 6 | Disorientation types | Temporal, spatial, or personal confusion |
+| 7 | Executive dysfunction patterns | Planning, initiation, organization, or response-control difficulty |
+| 8 | Abstract reasoning | Ability to generalize beyond literal or concrete content |
+| 9 | Semantic clustering vs. fragmentation | Thematic organization versus disconnected ideas |
+| 10 | Emotional appropriateness | Fit between affective tone and content |
+| 11 | Novel information content | Production of new, meaningful information |
+| 12 | Ambiguity and vagueness | Reliance on underspecified or empty references |
+| 13 | Instruction following | Whether the answer addresses the elicitation request |
+| 14 | Logical self-consistency | Internal contradiction or inconsistency |
+| 15 | Confabulation | Unsupported but plausible invented content |
+| 16 | Clinical impression | Rubric-based overall impairment impression |
+| 17 | Error-type classification | Semantic, retrieval, syntactic, phonological, or executive errors |
+| 18 | Compensation strategies | Circumlocution, avoidance, or memory-related meta-commentary |
+
+The implementation requests scores in five sections. Invalid individual scores
+are replaced with `1.0`. Batch extraction retries parse failures and ultimately
+uses a full vector of `1.0` values after repeated failure. The configured model
+is `ministral-3:8b`, with temperature 0.
+
+These scores are model-generated annotations, not clinician ratings.
+
+## HuBERT Representation
+
+Implementation: `processing/transcriber.py`
+
+`facebook/hubert-large-ll60k` produces a sequence of 1024-dimensional hidden
+states. Neurolens mean-pools over the time axis to obtain one
+1024-dimensional vector per recording.
+
+Current training then:
+
+1. fits a `StandardScaler` on training HuBERT vectors;
+2. transforms train, validation, and test vectors;
+3. fits `PCA(n_components=128)` on the scaled training vectors; and
+4. concatenates the 128 PCA components after the 99 standardized
+   handcrafted/semantic features.
+
+PCA components are learned features and do not have stable semantic names.
+
+## Final Input Order
+
+The current model receives:
+
+```text
+0:52      acoustic features
+52:81     linguistic features
+81:99     semantic features
+99:227    PCA-reduced HuBERT components
+```
+
+The raw extraction order before preprocessing is:
+
+```text
+0:52       acoustic features
+52:81      linguistic features
+81:99      semantic features
+99:1123    raw HuBERT dimensions
+```
+
+Tracked repository checkpoints and `model_scaler.pkl` currently correspond to
+the older raw 1123-dimensional path. They are not compatible with the current
+227-dimensional default architecture.

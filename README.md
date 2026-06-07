@@ -1,210 +1,301 @@
 # Neurolens AI
 
-> Multimodal speech intelligence for cognitive assessment from spontaneous spoken responses.
+Multimodal speech analysis for cognitive-status classification and MMSE
+regression.
 
-![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Research%20Codebase-6c757d)
-![Tasks](https://img.shields.io/badge/Tasks-MMSE%20%2B%20Diagnosis-0a7ea4)
-![Languages](https://img.shields.io/badge/Languages-English%20%2B%20Mandarin-198754)
+![Status](https://img.shields.io/badge/status-research%20code-6c757d)
+![Languages](https://img.shields.io/badge/languages-English%20%7C%20Mandarin-198754)
 
-Neurolens AI is a research pipeline that turns raw speech into cognitive predictions.
+Neurolens AI investigates whether acoustic, linguistic, discourse-semantic,
+and self-supervised speech representations can be combined to estimate
+cognitive status from spontaneous speech. The current pipeline supports
+English and Mandarin recordings and jointly predicts:
 
-Given an audio recording and its prompt, the system:
-- cleans and normalizes the audio
-- transcribes speech with Whisper
-- extracts acoustic, linguistic, and LLM-scored semantic features
-- generates HuBERT audio embeddings
-- fuses everything into a multitask neural network
-- predicts both MMSE score and cognitive status (`HC`, `MCI`, `AD`)
+- Mini-Mental State Examination (MMSE) score
+- cognitive status: healthy control (`HC`), mild cognitive impairment (`MCI`),
+  or Alzheimer's disease (`AD`)
 
-## Quick Links
+This repository is research code. It is not a clinical device, diagnostic
+system, packaged Python library, or self-contained dataset release.
 
-- [How To Use](HOW_TO_USE.md)
-- [Feature Inventory](features/FEATURES.md)
-- [Evaluation Scripts](eval_scripts/)
-- [LLM Semantic Benchmarking](llm_eval/)
+## Overview
 
-## Why This Project Exists
+For each recording, the pipeline:
 
-Speech carries cognitive signal at more than one level:
-- vocal delivery
-- lexical choice
-- syntax
-- discourse organization
-- semantic coherence
+1. converts audio to denoised 16 kHz mono WAV;
+2. transcribes it with Whisper `large-v3-turbo`;
+3. extracts 52 acoustic, 29 linguistic, and 18 LLM-derived semantic features;
+4. computes a 1024-dimensional HuBERT `facebook/hubert-large-ll60k`
+   representation;
+5. standardizes the 99 handcrafted/semantic features separately from the
+   HuBERT representation;
+6. reduces HuBERT from 1024 to 128 dimensions using PCA fitted on training
+   data only; and
+7. trains a shared multitask network on the resulting 227-dimensional input.
 
-Most pipelines lean on only one or two of those.
+```text
+audio + elicitation question
+        |
+        +-- audio cleanup
+        +-- Whisper transcription
+        |
+        +-- acoustic features -------------------- 52
+        +-- linguistic features ----------------- 29
+        +-- local-LLM semantic scores ----------- 18
+        +-- HuBERT representation -- 1024 -> PCA 128
+                                                     |
+                                  fused model input: 227
+                                                     |
+                           +-------------------------+-------------------+
+                           |                                             |
+                    MMSE regression                         HC/MCI/AD classification
+```
 
-Neurolens AI is designed to model them jointly so the final predictor has access to both low-level speech behavior and higher-level clinical language structure.
+See [HOW_TO_USE.md](HOW_TO_USE.md) for setup and execution, and
+[features/FEATURES.md](features/FEATURES.md) for the ordered feature schema.
 
-## What Makes It Different
+## Method
 
-Neurolens AI combines four modalities in one pipeline:
-- handcrafted acoustic markers
-- handcrafted linguistic markers
-- discourse-level semantic ratings from a local LLM
-- dense self-supervised speech embeddings
+### Speech processing
 
-This produces a final feature vector of `1123` dimensions:
-- acoustics: `52`
-- linguistics: `29`
-- semantics: `18`
-- HuBERT embeddings: `1024`
+Audio is resampled to 16 kHz, converted to mono, peak-normalized, and
+denoised. Training samples receive three offline augmentations using small
+time-stretch perturbations, pink noise, and light reverberation. Augmented
+audio always reuses the base recording's transcript. It shares the base
+semantic cache key, so semantic scores are reused when that cache is enabled
+and recomputed otherwise.
+
+Whisper produces the transcript, segment timestamps, duration, filler count,
+and language metadata. Mandarin transcripts can also include a pinyin
+representation when `pypinyin` is available.
+
+### Feature representation
+
+| Modality | Raw dimensions | Model dimensions | Implementation |
+|---|---:|---:|---|
+| Acoustic | 52 | 52 | `features/acoustics.py` |
+| Linguistic | 29 | 29 | `features/linguistics.py` |
+| Semantic | 18 | 18 | `features/semantics.py` |
+| HuBERT | 1024 | 128 after PCA | `processing/transcriber.py` |
+| **Total** | **1123** | **227** | |
+
+Semantic features are rubric-based scores in the range 0-4. They are produced
+through a local Ollama model; the configured default is `ministral-3:8b`.
+English and Mandarin use separate rubric files.
+
+### Multitask model
+
+The 227-dimensional input is partitioned by modality and passed through four
+encoders:
+
+- acoustics: `52 -> 64`
+- linguistics: `29 -> 32`
+- semantics: `18 -> 32`
+- PCA-reduced HuBERT: `128 -> 64`
+
+The encoded representations are concatenated, fused through a `128 -> 64`
+shared backbone, and passed to separate MMSE-regression and three-class
+classification heads. Training uses Huber loss for regression, cross-entropy
+for classification, and masked losses so samples may omit either target.
+
+The current training loss is:
+
+```text
+0.45 * MMSE loss + 0.55 * cognitive-status loss
+```
+
+when both labels are present.
+
+## Data
+
+The local, Git-ignored split metadata references seven corpora:
+
+| Corpus key | Language in current metadata | Primary labels used |
+|---|---|---|
+| `ADReSS-IS2020` | English | MMSE, diagnosis |
+| `ADReSSo21` | English | MMSE, diagnosis |
+| `ADReSS-M` | English | MMSE, diagnosis |
+| `PITT_CORPUS` | English | MMSE, diagnosis |
+| `TAUKADIAL` | English | MMSE, diagnosis |
+| `CHOU` | Mandarin | diagnosis |
+| `NCMMSC2021` | Mandarin | diagnosis |
+
+The repository does not distribute the underlying recordings. Access,
+licensing, consent, and citation requirements remain governed by each corpus
+provider. The split builder groups recordings by subject and attempts to
+balance split size, corpus, language, diagnosis, and language-diagnosis
+composition.
+
+The local TAUKADIAL subset is currently labelled English-only even though the
+TAUKADIAL corpus itself is bilingual English and Mandarin/Chinese.
+
+Current metadata contains 1,657 original recordings before training
+augmentation:
+
+| Split | Samples | English | Mandarin | MMSE-labelled | Diagnosis-labelled |
+|---|---:|---:|---:|---:|---:|
+| Train | 1,312 | 963 | 349 | 963 | 1,312 |
+| Validation | 173 | 129 | 44 | 129 | 173 |
+| Test | 172 | 129 | 43 | 129 | 172 |
+
+These counts describe the local metadata currently present in
+`data_jsons/`; they are not corpus-wide statistics.
 
 ## Quick Start
 
-If you already have the local datasets and environment available:
+Prerequisites:
+
+- Python 3.10 or newer
+- system support for the audio packages in `requirements.txt`
+- Ollama with `ministral-3:8b`
+- local copies of the referenced datasets
+- enough memory and storage for Whisper, HuBERT, sentence-transformer models,
+  caches, cleaned audio, and augmented audio
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 python -m spacy download zh_core_web_sm
-ollama serve
 ollama pull ministral-3:8b
+ollama serve
 python main.py
-python eval_scripts/quick_eval.py
 ```
 
-For the real workflow, expected directory layout, caches, and evaluation commands, use [HOW_TO_USE.md](HOW_TO_USE.md).
+`main.py` interactively asks which cached stages to reuse. A first run may
+download several model checkpoints and is computationally expensive.
 
-## Pipeline
+## Outputs
+
+A successful run of the current training code writes:
 
 ```text
-audio
-  -> cleanup
-  -> transcription
-  -> feature extraction
-     -> acoustics (52)
-     -> linguistics (29)
-     -> semantics (18)
-     -> HuBERT embeddings (1024)
-  -> feature scaling
-  -> multitask model
-     -> MMSE regression
-     -> cognitive-status classification
+models/
+  model_scaler.pkl
+  model_emb_scaler.pkl
+  model_emb_pca.pkl
+  model_weights_reg.pth
+  model_weights_cls.pth
+  features/
+    X_{train,val,test}_scaled.npy
+    y_{train,val,test}.npy
+    z_{train,val,test}.npy
+    y_{train,val,test}_mask.npy
+    z_{train,val,test}_mask.npy
 ```
 
-## Model Overview
+The saved `X_*_scaled.npy` arrays produced by current code have 227 columns.
 
-The model uses separate encoders for each modality, a shared fused backbone, and two output heads:
-- MMSE regression head
-- 3-class cognitive-status classification head
+## Evaluation Status
 
-Core implementation:
-- `processing/cleanup.py`
-- `processing/transcriber.py`
-- `features/acoustics.py`
-- `features/linguistics.py`
-- `features/semantics.py`
-- `ml/model.py`
+The repository contains historical plots, CSV files, scalers, and weights
+from the earlier 1123-dimensional architecture. They do **not** describe the
+current PCA-based 227-dimensional implementation and should not be presented
+as current results without retraining and regenerating all evaluation
+artifacts.
 
-## Current Scope
+The evaluation scripts also predate the preprocessing change. Some will work
+after current 227-dimensional arrays and matching weights are generated;
+`eval_scripts/modality_config_comparison.py` still assumes 1024 embedding
+columns and requires an implementation update.
 
-### Tasks
+For this reason, this README intentionally does not claim a current benchmark
+score. See [HOW_TO_USE.md](HOW_TO_USE.md#evaluation-and-compatibility) for the
+compatibility matrix.
 
-- MMSE regression
-- cognitive-status classification: `HC`, `MCI`, `AD`
-
-### Language Support
-
-- English
-- Mandarin
-
-### Datasets Used In The Local Workspace
-
-- ADReSS-IS2020
-- ADReSS-M
-- ADReSSo21
-- TAUKADIAL
-- Pitt Corpus
-- CHOU
-
-## Results
-
-The repository already contains evaluation artifacts under `eval_results/`.
-
-### MMSE Prediction Behavior
-
-![True vs Predicted MMSE](eval_results/true_vs_predicted_mmse.png)
-
-This plot shows how predicted MMSE tracks the ground-truth scores across the held-out test set.
-
-### Error Distribution
-
-![MAE Distribution](eval_results/mae_distribution.png)
-
-This visualization shows how absolute error distributes across datasets rather than reporting only one summary metric.
-
-### Classification Output
-
-![Confusion Matrix](eval_results/confusion_matrix.png)
-
-This is the saved confusion matrix for the diagnosis head on the test split.
-
-### Agreement Analysis
-
-![Bland-Altman Analysis](eval_results/bland_altman_analysis.png)
-
-The Bland-Altman plot helps inspect systematic bias and spread between predicted and true MMSE values.
-
-## Repository Layout
+## Repository Structure
 
 ```text
-features/        handcrafted acoustic, linguistic, and semantic features
-processing/      audio cleanup, ASR, and stage-wise batch processing
-ml/              augmentation and multitask model code
-eval_scripts/    model evaluation and ablation scripts
-llm_eval/        semantic-rubric benchmarking against humans and other LLMs
-models/          saved weights, scaler, and cached feature matrices
-data_jsons/      train/val/test metadata splits
+main.py                 end-to-end preprocessing and multitask training
+server.py               experimental Flask inference API
+features/               acoustic, linguistic, and semantic extraction
+processing/             cleanup, ASR, embeddings, and batch orchestration
+ml/                     augmentation and model implementation
+data_jsons/             local train/validation/test metadata and split builder
+eval_scripts/           evaluation and ablation utilities
+eval_results/           historical generated plots and tables
+llm_eval/               experimental semantic-rater evaluation utilities
+models/                 tracked historical artifacts; generated arrays ignored
 ```
 
-## Semantic Layer
+## Known Limitations
 
-The semantic branch is not just embedding-based text scoring.
+- The project assumes locally licensed datasets and is not reproducible from
+  the Git repository alone.
+- The tracked weights and scaler belong to the previous 1123-dimensional
+  model. Current training additionally requires an embedding scaler and PCA
+  artifact, which are not tracked at present.
+- `server.py` uses the old 1123-dimensional preprocessing path and does not
+  load the embedding scaler or PCA. It is not compatible with a newly trained
+  227-dimensional model.
+- The current model does not constrain MMSE predictions to the clinical
+  0-30 range.
+- Semantic scoring depends on a nondeterministic external runtime despite
+  temperature-zero settings; failures can fall back to default scores.
+- Sentence-transformer and spaCy model-loading failures can silently activate
+  reduced linguistic fallbacks.
+- Training does not set a global random seed, so augmentation and optimization
+  are not exactly reproducible between runs.
+- This system is intended for research only. Its outputs must not be treated
+  as diagnoses or used for clinical decision-making.
 
-Neurolens uses a local LLM through Ollama to score clinically motivated discourse features such as:
-- semantic memory degradation
-- topic maintenance
-- confabulation
-- logical self-consistency
-- executive dysfunction patterns
+## Dataset Acknowledgements
 
-The default scorer is currently `ministral-3:8b`.
+This project uses locally obtained data derived from the following corpora and
+shared tasks. The data are not redistributed here.
 
-## Documentation
+- **ADReSS-IS2020 / ADReSS 2020**: Luz, S., Haider, F., de la Fuente, S.,
+  Fromm, D., & MacWhinney, B. (2020). *Alzheimer's Dementia Recognition
+  Through Spontaneous Speech: The ADReSS Challenge*. Interspeech 2020.
+  [doi:10.21437/Interspeech.2020-2571](https://doi.org/10.21437/Interspeech.2020-2571)
+- **ADReSSo21 / ADReSSo 2021**: Luz, S., Haider, F., de la Fuente, S.,
+  Fromm, D., & MacWhinney, B. (2021). *Detecting Cognitive Decline Using
+  Speech Only: The ADReSSo Challenge*. Interspeech 2021.
+  [doi:10.21437/Interspeech.2021-1220](https://doi.org/10.21437/Interspeech.2021-1220)
+- **ADReSS-M**: Luz, S., Haider, F., Fromm, D., Lazarou, I.,
+  Kompatsiaris, I., & MacWhinney, B. (2023). *Multilingual Alzheimer's
+  Dementia Recognition Through Spontaneous Speech: A Signal Processing Grand
+  Challenge*. ICASSP 2023 Signal Processing Grand Challenge.
+  [arXiv:2301.05562](https://arxiv.org/abs/2301.05562)
+- **DementiaBank Pitt Corpus**: Becker, J. T., Boller, F., Lopez, O. L.,
+  Saxton, J., & McGonigle, K. L. (1994). *The Natural History of Alzheimer's
+  Disease: Description of Study Cohort and Accuracy of Diagnosis*. Archives
+  of Neurology, 51(6), 585-594.
+  [Corpus page and required acknowledgements](https://talkbank.org/dementia/access/English/Pitt.html)
+  The Pitt corpus requires acknowledgement of NIA grants AG03705 and AG05133.
+- **Chou Corpus**: DementiaBank Mandarin Chou corpus, contributed by
+  Chia-Ju Chou, containing Mandarin picture-description recordings from
+  healthy-control and MCI participants.
+  [DementiaBank corpus index](https://talkbank.org/dementia/access/)
+- **TAUKADIAL (English and Mandarin/Chinese)**: Luz, S., de la Fuente
+  Garcia, S., Haider, F., Fromm, D., MacWhinney, B., Lanzi, A., Chang, Y.-N.,
+  Chou, C.-J., & Liu, Y.-C. (2024). *Connected Speech-Based Cognitive
+  Assessment in Chinese and English*. Interspeech 2024.
+  [doi:10.21437/Interspeech.2024-1807](https://doi.org/10.21437/Interspeech.2024-1807)
+- **NCMMSC2021-AD**: *NCMMSC2021 Alzheimer's Disease Recognition Evaluation
+  Baseline and Dataset*, Speech and Audio Technology Laboratory, Tsinghua
+  University.
+  [Dataset page](https://web.ee.tsinghua.edu.cn/satlab/en/gxsj/7552/content/1011.htm)
+  and [doi:10.12263/DZXB.20220162](https://doi.org/10.12263/DZXB.20220162)
 
-- [HOW_TO_USE.md](HOW_TO_USE.md): setup, environment, datasets, training, outputs, evaluation
-- [features/FEATURES.md](features/FEATURES.md): feature definitions and dimensions
-- `eval_scripts/`: quick evaluation, ablations, and breakdown analysis
-- `llm_eval/`: inter-LLM, intra-LLM, and human agreement analysis for semantic scoring
+## Additional Resources
 
-## Support
+The linguistic feature extractor uses published English and Mandarin
+concreteness norms:
 
-If you are trying to run or extend the project:
-- start with [HOW_TO_USE.md](HOW_TO_USE.md)
-- use the repository issue tracker for broken scripts, setup gaps, or reproducibility issues
+- Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014). Concreteness ratings
+  for 40 thousand generally known English word lemmas. *Behavior Research
+  Methods, 46*(3), 904-911.
+- Xu, X., & Li, J. (2020). Concreteness/abstractness ratings for two-character
+  Chinese words in MELD-SCH. *PLOS ONE, 15*(6), e0232133.
+  [doi:10.1371/journal.pone.0232133](https://doi.org/10.1371/journal.pone.0232133)
 
-## Project Status
+## Responsible Use
 
-This is a research codebase, not a packaged library or production service.
-
-Practical implications:
-- local datasets are assumed to exist already
-- several stages are optimized around cache reuse, not clean first-run UX
-- the core training and evaluation flow is usable
-- some utilities in `llm_eval/` are still experimental and need cleanup before broad reuse
-
-## Credits
-
-Concreteness resources used in this repository:
-
-Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014).  
-Concreteness ratings for 40 thousand generally known English word lemmas.  
-Behavior Research Methods, 46(3), 904-911.
-
-Xu, X., & Li, J. (2020).  
-Concreteness/abstractness ratings for two-character Chinese words in MELD-SCH.  
-PLoS ONE, 15(6), e0232133.  
-https://doi.org/10.1371/journal.pone.0232133
+Neurolens AI processes sensitive health-related speech. Users are responsible
+for corpus agreements, informed-consent constraints, privacy protection,
+secure storage, and applicable institutional or legal review. Predictions are
+experimental research outputs, not medical advice.

@@ -6,14 +6,21 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from sklearn.decomposition import PCA
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
+N_ACOUSTICS = 52
+N_LINGUISTICS = 29
+N_SEMANTICS = 18
+N_EMBEDDINGS = 128
+
 # neural network:
-#   A [52 -> 64], L [29 -> 32], S [18 -> 32], E [1024 -> 16]
-#   A+L+S [144 -> 256 -> 64 -> 32 -> specific output head]
+#   E: PCA(1024 -> 128)
+#   A [52 -> 64], L [29 -> 32], S [18 -> 32], E [128 -> 64]
+#   A+L+S [227 -> 128 -> 64 -> specific output head]
 class Backbone(nn.Module):
     def __init__(self, n_acoustics, n_linguistics, n_semantics, n_embeddings):
         super().__init__()
@@ -53,12 +60,12 @@ class Backbone(nn.Module):
         # everything together
         in_features = (64 if n_acoustics > 0 else 0) + (32 if n_linguistics > 0 else 0) + (32 if n_semantics > 0 else 0) + (64 if n_embeddings > 0 else 0)
         self.fusion = nn.Sequential(
-            nn.Linear(in_features, 512),
-            nn.LayerNorm(512),
+            nn.Linear(in_features, 128),
+            nn.LayerNorm(128),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
+            nn.Linear(128, 64),
+            nn.LayerNorm(64),
             nn.ReLU(),
             nn.Dropout(0.3)
         )
@@ -81,15 +88,12 @@ class Backbone(nn.Module):
 
         return output
 
-# mmse regression [1123 -> backbone -> 32 -> 1]
+# mmse regression [227 -> backbone -> 32 -> 1]
 class MMSERegression(nn.Module):
     def __init__(self, backbone: Backbone):
         super().__init__()
         self.backbone = backbone
         self.net = nn.Sequential(
-            nn.Linear(256, 64),
-            nn.LayerNorm(64),
-            nn.Dropout(0.3),
             nn.Linear(64, 32),
             nn.LayerNorm(32),
             nn.Dropout(0.3),
@@ -99,17 +103,14 @@ class MMSERegression(nn.Module):
     def forward(self, x):
         features = self.backbone(x)
         output = self.net(features)
-        return torch.clamp(output, 0, 30)
+        return output
 
-# cog status classification [1123 -> backbone -> 32 -> 3 logits]
+# cog status classification [227 -> backbone -> 32 -> 3 logits]
 class CognitiveStatusClassification(nn.Module):
     def __init__(self, backbone: Backbone):
         super().__init__()
         self.backbone = backbone
         self.net = nn.Sequential(
-            nn.Linear(256, 64),
-            nn.LayerNorm(64),
-            nn.Dropout(0.3),
             nn.Linear(64, 32),
             nn.LayerNorm(32),
             nn.Dropout(0.3),
@@ -123,14 +124,16 @@ class CognitiveStatusClassification(nn.Module):
 
 cog_statuses = ['HC', 'MCI', 'AD']
 
-# feature scaling
-scaler = StandardScaler()
-scaler_fitted = False
+# preprocessing
+scaler, emb_scaler = StandardScaler(), StandardScaler()
+emb_pca = PCA(n_components=N_EMBEDDINGS)
+scaler_fitted, emb_scaler_fitted = False, False
+emb_pca_fitted = False
 
 # initialize model, loss, optimizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def new_backbone(n_acoustics=52, n_linguistics=29, n_semantics=18, n_embeddings=1024):
+def new_backbone(n_acoustics=N_ACOUSTICS, n_linguistics=N_LINGUISTICS, n_semantics=N_SEMANTICS, n_embeddings=N_EMBEDDINGS):
     return Backbone(n_acoustics, n_linguistics, n_semantics, n_embeddings).to(device)
 
 def new_multitask(backbone: Backbone, lr=1e-3, weight_decay=1e-5):
@@ -158,7 +161,7 @@ def new_multitask(backbone: Backbone, lr=1e-3, weight_decay=1e-5):
 
     return regressor, classifier, reg_criterion, cls_criterion, optimizer, scheduler
 
-# ========== FEATURE SCALING ========== #
+# ========== PREPROCESSING ========== #
 
 def fit_scaler(X):
     global scaler, scaler_fitted
@@ -166,18 +169,59 @@ def fit_scaler(X):
     scaler_fitted = True
     return scaler
 
+def fit_emb_scaler(X):
+    global emb_scaler, emb_scaler_fitted
+    emb_scaler.fit(X)
+    emb_scaler_fitted = True
+    return emb_scaler
+
+def fit_emb_pca(X):
+    global emb_pca, emb_pca_fitted
+    emb_pca.fit(X)
+    emb_pca_fitted = True
+    return emb_pca
+
 def transform_features(X):
     if not scaler_fitted:
         raise RuntimeError("Scaler not fitted! Call fit_scaler() first.")
     return scaler.transform(X)
 
+def transform_emb_scaler(X):
+    if not emb_scaler_fitted:
+        raise RuntimeError("Embedding scaler not fitted! Call fit_emb_scaler() first.")
+    return emb_scaler.transform(X)
+
+def transform_emb_pca(X):
+    if not emb_pca_fitted:
+        raise RuntimeError("Embedding PCA not fitted! Call fit_emb_pca() first.")
+    return emb_pca.transform(X)
+
 def save_scaler(fp: Path):
     joblib.dump(scaler, str(fp))
+
+def save_emb_scaler(fp: Path):
+    joblib.dump(emb_scaler, str(fp))
+
+def save_emb_pca(fp: Path):
+    joblib.dump(emb_pca, str(fp))
 
 def load_scaler(fp: Path):
     global scaler, scaler_fitted
     scaler = joblib.load(str(fp))
     scaler_fitted = True
+    return None
+
+def load_emb_scaler(fp: Path):
+    global emb_scaler, emb_scaler_fitted
+    emb_scaler = joblib.load(str(fp))
+    emb_scaler_fitted = True
+    return None
+
+def load_emb_pca(fp: Path):
+    global emb_pca, emb_pca_fitted
+    emb_pca = joblib.load(str(fp))
+    emb_pca_fitted = True
+    return None
 
 # ========== DATALOADER ========== #
 

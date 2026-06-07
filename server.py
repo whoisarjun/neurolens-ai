@@ -16,7 +16,15 @@ from ml import model
 from processing import cleanup, transcriber
 from utils.language import normalize_language
 
+
 app = Flask(__name__)
+
+# Health check endpoint
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'ok'
+    }), 200
 
 REG_WEIGHTS_PATH = Path("models/model_weights_reg.pth")
 CLS_WEIGHTS_PATH = Path("models/model_weights_cls.pth")

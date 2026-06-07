@@ -32,6 +32,8 @@ TEST_JSON = Path('data_jsons/test.json')
 REG_WEIGHTS_PATH = Path('models/model_weights_reg.pth')
 CLS_WEIGHTS_PATH = Path('models/model_weights_cls.pth')
 SCALER_PATH = Path('models/model_scaler.pkl')
+EMB_SCALER_PATH = Path('models/model_emb_scaler.pkl')
+EMB_PCA_PATH = Path('models/model_emb_pca.pkl')
 
 FEATURE_DIR = Path('models/features')
 FEATURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -106,7 +108,8 @@ def process_split(json_path: Path, split_name: str, use_cache=None, augment=True
     pipeline.gen_embeddings_all(data, use_cache_embeddings=use_cache['embeddings'], batch_size=4)
     print(f'{BOLD}{GREEN}Done generating embeddings from {split_name} data ✓{RESET}')
 
-    X = [d['features'] for d in data]
+    X_features = [d['features'] for d in data]
+    X_embeddings = [d['embeddings'] for d in data]
     y = []
     z = []
     y_mask = []
@@ -122,7 +125,7 @@ def process_split(json_path: Path, split_name: str, use_cache=None, augment=True
         y_mask.append(has_mmse)
         z_mask.append(has_diagnosis)
 
-    return X, y, z, y_mask, z_mask
+    return X_features, X_embeddings, y, z, y_mask, z_mask
 
 # training with proper train/val/test split
 def train(
@@ -219,19 +222,28 @@ def main():
         'embeddings': cache.ask('audio embeddings')
     }
 
-    X_train, y_train, z_train, y_train_mask, z_train_mask = process_split(TRAIN_JSON, 'train', use_cache=use_cache_list, augment=True)
-    X_val, y_val, z_val, y_val_mask, z_val_mask = process_split(VAL_JSON, 'validation', use_cache=use_cache_list, augment=False)
-    X_test, y_test, z_test, y_test_mask, z_test_mask = process_split(TEST_JSON, 'test', use_cache=use_cache_list, augment=False)
+    X_train, X_train_emb, y_train, z_train, y_train_mask, z_train_mask = process_split(TRAIN_JSON, 'train', use_cache=use_cache_list, augment=True)
+    X_val, X_val_emb, y_val, z_val, y_val_mask, z_val_mask = process_split(VAL_JSON, 'validation', use_cache=use_cache_list, augment=False)
+    X_test, X_test_emb, y_test, z_test, y_test_mask, z_test_mask = process_split(TEST_JSON, 'test', use_cache=use_cache_list, augment=False)
     print(f"\n{GREEN}Done processing all data!{RESET}")
 
     # scale features (fit on train only)
-    print(f"\n{BOLD}{CYAN}Fitting scaler on train data...{RESET}")
+    print(f"\n{BOLD}{CYAN}Fit-transforming scalers and PCA on train data...{RESET}")
     model.fit_scaler(X_train)
+    model.fit_emb_scaler(X_train_emb)
     model.save_scaler(SCALER_PATH)
+    model.save_emb_scaler(EMB_SCALER_PATH)
 
-    X_train_scaled = model.transform_features(X_train)
-    X_val_scaled = model.transform_features(X_val)
-    X_test_scaled = model.transform_features(X_test)
+    X_train_emb = model.transform_emb_scaler(X_train_emb)
+    X_val_emb = model.transform_emb_scaler(X_val_emb)
+    X_test_emb = model.transform_emb_scaler(X_test_emb)
+
+    model.fit_emb_pca(X_train_emb)
+    model.save_emb_pca(EMB_PCA_PATH)
+
+    X_train_scaled = np.concatenate([model.transform_features(X_train), model.transform_emb_pca(X_train_emb)], axis=1)
+    X_val_scaled = np.concatenate([model.transform_features(X_val), model.transform_emb_pca(X_val_emb)], axis=1)
+    X_test_scaled = np.concatenate([model.transform_features(X_test), model.transform_emb_pca(X_test_emb)], axis=1)
 
     # save scaled features + labels
     np.save(FEATURE_DIR / 'X_train_scaled.npy', X_train_scaled)
