@@ -199,54 +199,69 @@ def embeddings(file_paths: list[Path], use_cache=False, batch_size=16, tqdm_desc
     to_process.sort(key=lambda item: item[2])
 
     def run_batch(batch_items):
-        batch_fps = [fp for fp, _, _ in batch_items]
-        batch_audios = [y for _, y, _ in batch_items]
-        max_len = max(len(y) for y in batch_audios)
-        padded = [np.pad(y, (0, max_len - len(y))) for y in batch_audios]
+        chunk_samples = 3 * 60 * 16000
 
-        inputs = hubert_processor(
-            padded,
-            sampling_rate=16000,
-            return_tensors='pt',
-            padding=True
-        )
+        for fp, y, duration in batch_items:
+            weighted_sum = None
+            total_frames = 0
 
-        if torch.cuda.is_available():
-            inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+            for start in range(0, len(y), chunk_samples):
+                chunk = y[start:start + chunk_samples]
+                if len(chunk) == 0:
+                    continue
 
-        try:
-            with torch.no_grad():
-                outputs = hubert_model(**inputs)
-                embs = outputs.last_hidden_state.mean(dim=1)
-        except torch.OutOfMemoryError:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            if len(batch_items) == 1:
-                fp, _, duration = batch_items[0]
-                raise RuntimeError(
-                    f'HuBERT OOM for {fp.name} ({duration:.1f}s). '
-                    'Reduce audio length, free GPU memory, or force CPU execution.'
-                ) from None
+                inputs = hubert_processor(
+                    chunk,
+                    sampling_rate=16000,
+                    return_tensors='pt',
+                    padding=True
+                )
 
-            mid = max(1, len(batch_items) // 2)
-            run_batch(batch_items[:mid])
-            run_batch(batch_items[mid:])
-            return
-        finally:
-            del inputs
-            if 'outputs' in locals():
-                del outputs
+                if torch.cuda.is_available():
+                    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
 
-        for fp, emb in zip(batch_fps, embs):
-            emb_cpu = emb.unsqueeze(0).cpu()
+                try:
+                    with torch.no_grad():
+                        outputs = hubert_model(**inputs)
+                        hidden = outputs.last_hidden_state
+                        frame_count = hidden.shape[1]
+                        chunk_sum = hidden.sum(dim=1).cpu()
+                except torch.OutOfMemoryError:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    raise RuntimeError(
+                        f'HuBERT OOM for {fp.name} ({duration:.1f}s), even with '
+                        '3-minute chunks. Reduce chunk length, free GPU memory, '
+                        'or force CPU execution.'
+                    ) from None
+                finally:
+                    del inputs
+                    if 'outputs' in locals():
+                        del outputs
+                    if 'hidden' in locals():
+                        del hidden
+
+                if weighted_sum is None:
+                    weighted_sum = chunk_sum
+                else:
+                    weighted_sum += chunk_sum
+                total_frames += frame_count
+
+                del chunk_sum
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            if weighted_sum is None or total_frames == 0:
+                raise RuntimeError(f'No HuBERT chunks produced for {fp.name}.')
+
+            emb_cpu = weighted_sum / total_frames
             results[fp] = emb_cpu
             cache.save(cache.key(fp, EMB_CACHE_DIR), emb_cpu)
 
-        del embs
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            del weighted_sum
 
-    # process uncached files in batches (default 16)
+    # Process uncached files in duration-sorted batches. Each file is internally
+    # split into 3-minute chunks before HuBERT embedding to avoid full-audio OOM.
     for i in tqdm(range(0, len(to_process), batch_size), desc=tqdm_desc):
         run_batch(to_process[i:i + batch_size])
 
