@@ -214,55 +214,74 @@ def train(
 
 # main flow
 def main():
-    use_cache_list = {
-        'transcript': cache.ask('transcripts'),
-        'acoustics': cache.ask('acoustic features'),
-        'linguistics': cache.ask('linguistic features'),
-        'semantics': cache.ask('LLM-generated semantic features'),
-        'embeddings': cache.ask('audio embeddings')
-    }
 
-    X_train, X_train_emb, y_train, z_train, y_train_mask, z_train_mask = process_split(TRAIN_JSON, 'train', use_cache=use_cache_list, augment=True)
-    X_val, X_val_emb, y_val, z_val, y_val_mask, z_val_mask = process_split(VAL_JSON, 'validation', use_cache=use_cache_list, augment=False)
-    X_test, X_test_emb, y_test, z_test, y_test_mask, z_test_mask = process_split(TEST_JSON, 'test', use_cache=use_cache_list, augment=False)
-    print(f"\n{GREEN}Done processing all data!{RESET}")
+    if input('Use saved tensors? (y/n): ') == 'y':
+        X_val_scaled = np.load(FEATURE_DIR / 'X_val_scaled.npy')
+        X_test_scaled = np.load(FEATURE_DIR / 'X_test_scaled.npy')
+        y_train = np.load(FEATURE_DIR / 'y_train.npy')
+        y_val = np.load(FEATURE_DIR / 'y_val.npy')
+        y_test = np.load(FEATURE_DIR / 'y_test.npy')
+        z_train = np.load(FEATURE_DIR / 'z_train.npy')
+        z_val = np.load(FEATURE_DIR / 'z_val.npy')
+        z_test = np.load(FEATURE_DIR / 'z_test.npy')
+        y_train_mask = np.load(FEATURE_DIR / 'y_train_mask.npy')
+        y_val_mask = np.load(FEATURE_DIR / 'y_val_mask.npy')
+        y_test_mask = np.load(FEATURE_DIR / 'y_test_mask.npy')
+        z_train_mask = np.load(FEATURE_DIR / 'z_train_mask.npy')
+        z_val_mask = np.load(FEATURE_DIR / 'z_val_mask.npy')
+        z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy')
 
-    # scale features (fit on train only)
-    print(f"\n{BOLD}{CYAN}Fit-transforming scalers and PCA on train data...{RESET}")
-    model.fit_scaler(X_train)
-    model.fit_emb_scaler(X_train_emb)
-    model.save_scaler(SCALER_PATH)
-    model.save_emb_scaler(EMB_SCALER_PATH)
+        print(f"\n{GREEN}✓ Loaded saved scaled features + labels from {FEATURE_DIR}{RESET}")
+    else:
+        use_cache_list = {
+            'transcript': cache.ask('transcripts'),
+            'acoustics': cache.ask('acoustic features'),
+            'linguistics': cache.ask('linguistic features'),
+            'semantics': cache.ask('LLM-generated semantic features'),
+            'embeddings': cache.ask('audio embeddings')
+        }
 
-    X_train_emb = model.transform_emb_scaler(X_train_emb)
-    X_val_emb = model.transform_emb_scaler(X_val_emb)
-    X_test_emb = model.transform_emb_scaler(X_test_emb)
+        X_train, X_train_emb, y_train, z_train, y_train_mask, z_train_mask = process_split(TRAIN_JSON, 'train', use_cache=use_cache_list, augment=True)
+        X_val, X_val_emb, y_val, z_val, y_val_mask, z_val_mask = process_split(VAL_JSON, 'validation', use_cache=use_cache_list, augment=False)
+        X_test, X_test_emb, y_test, z_test, y_test_mask, z_test_mask = process_split(TEST_JSON, 'test', use_cache=use_cache_list, augment=False)
+        print(f"\n{GREEN}Done processing all data!{RESET}")
 
-    model.fit_emb_pca(X_train_emb)
-    model.save_emb_pca(EMB_PCA_PATH)
+        # scale features (fit on train only)
+        print(f"\n{BOLD}{CYAN}Fit-transforming scalers and PCA on train data...{RESET}")
+        model.fit_scaler(X_train)
+        model.fit_emb_scaler(X_train_emb)
+        model.save_scaler(SCALER_PATH)
+        model.save_emb_scaler(EMB_SCALER_PATH)
 
-    X_train_scaled = np.concatenate([model.transform_features(X_train), model.transform_emb_pca(X_train_emb)], axis=1)
-    X_val_scaled = np.concatenate([model.transform_features(X_val), model.transform_emb_pca(X_val_emb)], axis=1)
-    X_test_scaled = np.concatenate([model.transform_features(X_test), model.transform_emb_pca(X_test_emb)], axis=1)
+        X_train_emb = model.transform_emb_scaler(X_train_emb)
+        X_val_emb = model.transform_emb_scaler(X_val_emb)
+        X_test_emb = model.transform_emb_scaler(X_test_emb)
 
-    # save scaled features + labels
-    np.save(FEATURE_DIR / 'X_train_scaled.npy', X_train_scaled)
-    np.save(FEATURE_DIR / 'X_val_scaled.npy', X_val_scaled)
-    np.save(FEATURE_DIR / 'X_test_scaled.npy', X_test_scaled)
-    np.save(FEATURE_DIR / 'y_train.npy', y_train)
-    np.save(FEATURE_DIR / 'y_val.npy', y_val)
-    np.save(FEATURE_DIR / 'y_test.npy', y_test)
-    np.save(FEATURE_DIR / 'z_train.npy', z_train)
-    np.save(FEATURE_DIR / 'z_val.npy', z_val)
-    np.save(FEATURE_DIR / 'z_test.npy', z_test)
-    np.save(FEATURE_DIR / 'y_train_mask.npy', y_train_mask)
-    np.save(FEATURE_DIR / 'y_val_mask.npy', y_val_mask)
-    np.save(FEATURE_DIR / 'y_test_mask.npy', y_test_mask)
-    np.save(FEATURE_DIR / 'z_train_mask.npy', z_train_mask)
-    np.save(FEATURE_DIR / 'z_val_mask.npy', z_val_mask)
-    np.save(FEATURE_DIR / 'z_test_mask.npy', z_test_mask)
+        model.fit_emb_pca(X_train_emb)
+        model.save_emb_pca(EMB_PCA_PATH)
 
-    print(f"\n{GREEN}✓ Saved scaled features + labels to {FEATURE_DIR}{RESET}")
+        X_train_scaled = np.concatenate([model.transform_features(X_train), model.transform_emb_pca(X_train_emb)], axis=1)
+        X_val_scaled = np.concatenate([model.transform_features(X_val), model.transform_emb_pca(X_val_emb)], axis=1)
+        X_test_scaled = np.concatenate([model.transform_features(X_test), model.transform_emb_pca(X_test_emb)], axis=1)
+
+        # save scaled features + labels
+        np.save(FEATURE_DIR / 'X_train_scaled.npy', X_train_scaled)
+        np.save(FEATURE_DIR / 'X_val_scaled.npy', X_val_scaled)
+        np.save(FEATURE_DIR / 'X_test_scaled.npy', X_test_scaled)
+        np.save(FEATURE_DIR / 'y_train.npy', y_train)
+        np.save(FEATURE_DIR / 'y_val.npy', y_val)
+        np.save(FEATURE_DIR / 'y_test.npy', y_test)
+        np.save(FEATURE_DIR / 'z_train.npy', z_train)
+        np.save(FEATURE_DIR / 'z_val.npy', z_val)
+        np.save(FEATURE_DIR / 'z_test.npy', z_test)
+        np.save(FEATURE_DIR / 'y_train_mask.npy', y_train_mask)
+        np.save(FEATURE_DIR / 'y_val_mask.npy', y_val_mask)
+        np.save(FEATURE_DIR / 'y_test_mask.npy', y_test_mask)
+        np.save(FEATURE_DIR / 'z_train_mask.npy', z_train_mask)
+        np.save(FEATURE_DIR / 'z_val_mask.npy', z_val_mask)
+        np.save(FEATURE_DIR / 'z_test_mask.npy', z_test_mask)
+
+        print(f"\n{GREEN}✓ Saved scaled features + labels to {FEATURE_DIR}{RESET}")
 
     backbone = model.new_backbone()
     regressor, classifier, reg_criterion, cls_criterion, optimizer, scheduler = model.new_multitask(backbone)

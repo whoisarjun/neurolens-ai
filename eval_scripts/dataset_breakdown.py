@@ -64,19 +64,42 @@ def main():
         pred_vals = np.array(dataset_data[dataset]['pred'])
 
         n_samples = len(true_vals)
-        mae = np.mean(np.abs(true_vals - pred_vals))
-        rmse = np.sqrt(np.mean((true_vals - pred_vals) ** 2))
-        r2 = r2_score(true_vals, pred_vals)
+        valid_mask = np.isfinite(true_vals) & np.isfinite(pred_vals)
+        n_valid = int(valid_mask.sum())
+        n_invalid = n_samples - n_valid
+
+        if n_valid == 0:
+            mae = np.nan
+            rmse = np.nan
+            r2 = np.nan
+        else:
+            true_valid = true_vals[valid_mask]
+            pred_valid = pred_vals[valid_mask]
+
+            mae = np.mean(np.abs(true_valid - pred_valid))
+            rmse = np.sqrt(np.mean((true_valid - pred_valid) ** 2))
+
+            if n_valid >= 2 and np.var(true_valid) > 0:
+                r2 = r2_score(true_valid, pred_valid)
+            else:
+                r2 = np.nan
 
         results.append({
             'Dataset': dataset,
             'Samples': n_samples,
+            'Valid Samples': n_valid,
+            'Invalid Samples': n_invalid,
             'MAE': mae,
             'RMSE': rmse,
             'R²': r2
         })
 
-        print(f"{dataset}: n={n_samples}, MAE={mae:.3f}, RMSE={rmse:.3f}, R²={r2:.3f}")
+        invalid_note = f", invalid={n_invalid}" if n_invalid else ""
+        r2_display = f"{r2:.3f}" if np.isfinite(r2) else "N/A"
+        print(
+            f"{dataset}: n={n_samples}, valid={n_valid}{invalid_note}, "
+            f"MAE={mae:.3f}, RMSE={rmse:.3f}, R²={r2_display}"
+        )
 
     # save results
     df = pd.DataFrame(results)

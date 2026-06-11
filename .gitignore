@@ -20,8 +20,9 @@ dist/
 # Jupyter
 .ipynb_checkpoints/
 
-# PyCharm / JetBrains
+# IDE
 .idea/
+.vscode/
 
 # OS trash
 .DS_Store
