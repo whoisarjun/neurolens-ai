@@ -1,8 +1,12 @@
 # Error distribution analysis script
 
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+# allow `python eval_scripts/<name>.py` from the repo root to import project packages
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +14,27 @@ import torch
 from scipy import stats
 
 from ml import model
+
+
+def require_files(paths):
+    missing = [str(p) for p in paths if not Path(p).exists()]
+    if missing:
+        print('\nMissing required files. Train a current model with `python main.py` first:')
+        for entry in missing:
+            print(f'  - {entry}')
+        sys.exit(1)
+
+
+def load_weights(path, net):
+    try:
+        model.load(path, net)
+    except RuntimeError as exc:
+        print(
+            '\nFailed to load weights into the current 227-dim architecture. '
+            'The tracked weights may belong to an older model; retrain with `python main.py`.\n'
+        )
+        print(exc)
+        sys.exit(1)
 
 TEST_JSON = Path('data_jsons/test.json')
 REG_WEIGHTS_PATH = Path('models/model_weights_reg.pth')
@@ -21,6 +46,12 @@ EVAL_DIR.mkdir(parents=True, exist_ok=True)
 def main():
     print("Loading test data...")
 
+    require_files([
+        TEST_JSON,
+        FEATURE_DIR / 'X_test_scaled.npy', FEATURE_DIR / 'y_test.npy',
+        REG_WEIGHTS_PATH, SCALER_PATH,
+    ])
+
     with TEST_JSON.open('r', encoding='utf-8') as f:
         test_data = json.load(f)['data']
 
@@ -28,7 +59,8 @@ def main():
     dataset_names = []
     for entry in test_data:
         output_path = entry['output']
-        dataset = output_path.split('/')[1]
+        parts = output_path.split('/')
+        dataset = parts[1] if len(parts) > 1 else parts[0]
         dataset_names.append(dataset)
 
     # load everything
@@ -38,7 +70,7 @@ def main():
     model.load_scaler(SCALER_PATH)
     backbone = model.new_backbone()
     regressor = model.MMSERegression(backbone).to(model.device)
-    model.load(REG_WEIGHTS_PATH, regressor)
+    load_weights(REG_WEIGHTS_PATH, regressor)
 
     # predict
     regressor.eval()
@@ -55,6 +87,17 @@ def main():
         dataset_data[dataset]['true'] = np.array(dataset_data[dataset]['true'])
         dataset_data[dataset]['pred'] = np.array(dataset_data[dataset]['pred'])
 
+    def valid_true_pred(dataset):
+        true_vals = dataset_data[dataset]['true']
+        pred_vals = dataset_data[dataset]['pred']
+        valid_mask = np.isfinite(true_vals) & np.isfinite(pred_vals)
+        return true_vals[valid_mask], pred_vals[valid_mask]
+
+    total_valid = sum(len(valid_true_pred(d)[0]) for d in dataset_data)
+    if total_valid == 0:
+        print('No samples with a finite MMSE label in the test split; nothing to plot.')
+        return
+
     # ========== MAE Distribution by Dataset ========== #
     print("\nGenerating MAE distribution plot...")
 
@@ -63,16 +106,18 @@ def main():
     colors = plt.cm.tab10(np.linspace(0, 1, len(dataset_data)))
 
     for i, (dataset, color) in enumerate(zip(sorted(dataset_data.keys()), colors)):
-        true_vals = dataset_data[dataset]['true']
-        pred_vals = dataset_data[dataset]['pred']
-
+        true_vals, pred_vals = valid_true_pred(dataset)
         absolute_errors = np.abs(true_vals - pred_vals)
+        absolute_errors = absolute_errors[np.isfinite(absolute_errors)]
 
         # density plot with KDE
-        if len(absolute_errors) > 1:
+        if len(absolute_errors) > 1 and np.var(absolute_errors) > 0:
             density = stats.gaussian_kde(absolute_errors)
-            x_range = np.linspace(0, max(absolute_errors) * 1.1, 200)
+            x_max = max(float(absolute_errors.max()) * 1.1, 1.0)
+            x_range = np.linspace(0, x_max, 200)
             plt.plot(x_range, density(x_range), label=dataset, color=color, linewidth=2)
+        elif len(absolute_errors) > 0:
+            plt.axvline(float(absolute_errors[0]), label=f'{dataset} (single/constant)', color=color, linewidth=2)
 
     plt.xlabel('|MMSE_true - MMSE_pred|', fontsize=12)
     plt.ylabel('Density', fontsize=12)
@@ -90,10 +135,12 @@ def main():
     plt.figure(figsize=(10, 6))
 
     for i, (dataset, color) in enumerate(zip(sorted(dataset_data.keys()), colors)):
-        true_vals = dataset_data[dataset]['true']
-        pred_vals = dataset_data[dataset]['pred']
-
+        true_vals, pred_vals = valid_true_pred(dataset)
         absolute_errors = np.abs(true_vals - pred_vals)
+        absolute_errors = absolute_errors[np.isfinite(absolute_errors)]
+
+        if len(absolute_errors) == 0:
+            continue
 
         # sort errors and calc cumulative percentages
         sorted_errors = np.sort(absolute_errors)
@@ -117,17 +164,20 @@ def main():
     plt.figure(figsize=(12, 8))
 
     for i, (dataset, color) in enumerate(zip(sorted(dataset_data.keys()), colors)):
-        true_vals = dataset_data[dataset]['true']
-        pred_vals = dataset_data[dataset]['pred']
+        true_vals, pred_vals = valid_true_pred(dataset)
+
+        if len(true_vals) == 0:
+            continue
 
         means = (true_vals + pred_vals) / 2
         diffs = pred_vals - true_vals
 
         plt.scatter(means, diffs, label=dataset, color=color, alpha=0.6, s=50)
 
-    # calc mean diff and lims of agreement
-    all_true = np.concatenate([dataset_data[d]['true'] for d in dataset_data.keys()])
-    all_pred = np.concatenate([dataset_data[d]['pred'] for d in dataset_data.keys()])
+    valid_pairs = [valid_true_pred(d) for d in dataset_data.keys()]
+    valid_pairs = [(t, p) for t, p in valid_pairs if len(t) > 0]
+    all_true = np.concatenate([t for t, _ in valid_pairs])
+    all_pred = np.concatenate([p for _, p in valid_pairs])
     all_means = (all_true + all_pred) / 2
     all_diffs = all_pred - all_true
 
@@ -137,9 +187,9 @@ def main():
     # plot mean and lims of agreement
     plt.axhline(mean_diff, color='black', linestyle='--', linewidth=2, label=f'Mean Diff: {mean_diff:.2f}')
     plt.axhline(mean_diff + 1.96 * std_diff, color='red', linestyle='--', linewidth=2,
-                label=f'+0.98 SD: {mean_diff + 1.96 * std_diff:.2f}')
+                label=f'+1.96 SD: {mean_diff + 1.96 * std_diff:.2f}')
     plt.axhline(mean_diff - 1.96 * std_diff, color='red', linestyle='--', linewidth=2,
-                label=f'-0.98 SD: {mean_diff - 1.96 * std_diff:.2f}')
+                label=f'-1.96 SD: {mean_diff - 1.96 * std_diff:.2f}')
 
     plt.xlabel('Mean(MMSE_true, MMSE_pred)', fontsize=12)
     plt.ylabel('MMSE_pred - MMSE_true', fontsize=12)
@@ -158,13 +208,17 @@ def main():
 
     # scatter plot with color-coded datasets
     for i, (dataset, color) in enumerate(zip(sorted(dataset_data.keys()), colors)):
-        true_vals = dataset_data[dataset]['true']
-        pred_vals = dataset_data[dataset]['pred']
+        true_vals, pred_vals = valid_true_pred(dataset)
+
+        if len(true_vals) == 0:
+            continue
 
         plt.scatter(true_vals, pred_vals, label=dataset, color=color, alpha=0.5, s=50)
 
-    all_true = np.concatenate([dataset_data[d]['true'] for d in dataset_data.keys()])
-    all_pred = np.concatenate([dataset_data[d]['pred'] for d in dataset_data.keys()])
+    valid_pairs = [valid_true_pred(d) for d in dataset_data.keys()]
+    valid_pairs = [(t, p) for t, p in valid_pairs if len(t) > 0]
+    all_true = np.concatenate([t for t, _ in valid_pairs])
+    all_pred = np.concatenate([p for _, p in valid_pairs])
 
     # perfect pred line
     min_val = min(all_true.min(), all_pred.min())

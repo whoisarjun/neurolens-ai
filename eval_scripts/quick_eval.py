@@ -1,6 +1,10 @@
 # Quick evaluation script
 
+import sys
 from pathlib import Path
+
+# allow `python eval_scripts/<name>.py` from the repo root to import project packages
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,6 +20,28 @@ FEATURE_DIR = Path('models/features')
 EVAL_DIR = Path('eval_results')
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
 
+def require_files(paths):
+    missing = [str(p) for p in paths if not Path(p).exists()]
+    if missing:
+        print('\nMissing required files. Train a current model with `python main.py` first:')
+        for entry in missing:
+            print(f'  - {entry}')
+        sys.exit(1)
+
+
+def load_weights(*pairs):
+    try:
+        for path, net in pairs:
+            model.load(path, net)
+    except RuntimeError as exc:
+        print(
+            '\nFailed to load weights into the current 227-dim architecture. '
+            'The tracked weights may belong to an older model; retrain with `python main.py`.\n'
+        )
+        print(exc)
+        sys.exit(1)
+
+
 def compute_score(values):
     if not values['preds']:
         return None
@@ -23,6 +49,13 @@ def compute_score(values):
 
 def main():
     print("Loading test data...")
+
+    require_files([
+        FEATURE_DIR / 'X_test_scaled.npy', FEATURE_DIR / 'y_test.npy',
+        FEATURE_DIR / 'z_test.npy', FEATURE_DIR / 'y_test_mask.npy',
+        FEATURE_DIR / 'z_test_mask.npy',
+        REG_WEIGHTS_PATH, CLS_WEIGHTS_PATH, SCALER_PATH,
+    ])
 
     # load scaled features and labels
     X_test_scaled = np.load(FEATURE_DIR / 'X_test_scaled.npy')
@@ -33,6 +66,11 @@ def main():
 
     print(f"Test samples: {len(X_test_scaled)}")
 
+    # create_dataloader indexes model.mmse_weights_table with an array; it is a plain
+    # list until training calls set_mmse_freq. Coerce it so eval works without training.
+    # (the inverse-frequency weights are not used by test_reg/test_cls.)
+    model.mmse_weights_table = np.asarray(model.mmse_weights_table, dtype=float)
+
     model.load_scaler(SCALER_PATH)
 
     # create models
@@ -41,8 +79,7 @@ def main():
     classifier = model.CognitiveStatusClassification(backbone).to(model.device)
 
     # load weights
-    model.load(REG_WEIGHTS_PATH, regressor)
-    model.load(CLS_WEIGHTS_PATH, classifier)
+    load_weights((REG_WEIGHTS_PATH, regressor), (CLS_WEIGHTS_PATH, classifier))
 
     # test loader
     test_loader = model.create_dataloader(
@@ -51,22 +88,22 @@ def main():
 
     # regression eval
     reg_criterion = torch.nn.HuberLoss(delta=1.5)
-    _, mae, rmse = model.test_reg(test_loader, regressor, reg_criterion)
+    _, mae, rmse, _ = model.test_reg(test_loader, regressor, reg_criterion)
 
     # compute R^2
     regressor.eval()
     reg_values = {'preds': [], 'targets': []}
     with torch.no_grad():
-        for xb, yb, _, y_mask, _ in test_loader:
+        for xb, yb, _, y_mask, _, _ in test_loader:
             if not y_mask.any():
                 continue
             xb = xb[y_mask]
             yb = yb[y_mask]
             xb = xb.to(model.device)
             yb = yb.to(model.device)
-            preds = regressor(xb).squeeze()
+            preds = regressor(xb).squeeze(-1)
             reg_values['preds'].append(preds.cpu().numpy())
-            reg_values['targets'].append(yb.cpu().numpy())
+            reg_values['targets'].append(yb.squeeze(-1).cpu().numpy())
 
     r2 = compute_score(reg_values)
 

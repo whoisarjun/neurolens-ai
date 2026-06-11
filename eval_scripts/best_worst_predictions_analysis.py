@@ -1,13 +1,38 @@
 # Best and worst prediction analysis script
 
 import json
+import sys
 from pathlib import Path
+
+# allow `python eval_scripts/<name>.py` from the repo root to import project packages
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
 import torch
 
 from ml import model
+
+
+def require_files(paths):
+    missing = [str(p) for p in paths if not Path(p).exists()]
+    if missing:
+        print('\nMissing required files. Train a current model with `python main.py` first:')
+        for entry in missing:
+            print(f'  - {entry}')
+        sys.exit(1)
+
+
+def load_weights(path, net):
+    try:
+        model.load(path, net)
+    except RuntimeError as exc:
+        print(
+            '\nFailed to load weights into the current 227-dim architecture. '
+            'The tracked weights may belong to an older model; retrain with `python main.py`.\n'
+        )
+        print(exc)
+        sys.exit(1)
 
 TEST_JSON = Path('data_jsons/test.json')
 REG_WEIGHTS_PATH = Path('models/model_weights_reg.pth')
@@ -19,6 +44,12 @@ EVAL_DIR.mkdir(parents=True, exist_ok=True)
 def main():
     print("Loading test data...")
 
+    require_files([
+        TEST_JSON,
+        FEATURE_DIR / 'X_test_scaled.npy', FEATURE_DIR / 'y_test.npy',
+        REG_WEIGHTS_PATH, SCALER_PATH,
+    ])
+
     with TEST_JSON.open('r', encoding='utf-8') as f:
         test_data = json.load(f)['data']
 
@@ -26,7 +57,8 @@ def main():
     dataset_names = []
     for entry in test_data:
         output_path = entry['output']
-        dataset = output_path.split('/')[1]
+        parts = output_path.split('/')
+        dataset = parts[1] if len(parts) > 1 else parts[0]
         dataset_names.append(dataset)
 
     # load everything
@@ -36,7 +68,7 @@ def main():
     model.load_scaler(SCALER_PATH)
     backbone = model.new_backbone()
     regressor = model.MMSERegression(backbone).to(model.device)
-    model.load(REG_WEIGHTS_PATH, regressor)
+    load_weights(REG_WEIGHTS_PATH, regressor)
 
     # predict
     regressor.eval()
@@ -44,13 +76,20 @@ def main():
         X_tensor = torch.tensor(X_test_scaled, dtype=torch.float32).to(model.device)
         predictions = regressor(X_tensor).cpu().numpy().flatten()
 
+    # keep only samples with a real MMSE label (unlabeled entries are NaN)
+    dataset_names = np.array(dataset_names)
+    valid_mask = np.isfinite(y_test) & np.isfinite(predictions)
+    y_valid = y_test[valid_mask]
+    pred_valid = predictions[valid_mask]
+    dataset_valid = dataset_names[valid_mask]
+
     # mae calc and sort
-    absolute_errors = np.abs(y_test - predictions)
+    absolute_errors = np.abs(y_valid - pred_valid)
 
     results_df = pd.DataFrame({
-        'True_MMSE': y_test,
-        'Predicted_MMSE': predictions,
-        'Dataset': dataset_names,
+        'True_MMSE': y_valid,
+        'Predicted_MMSE': pred_valid,
+        'Dataset': dataset_valid,
         'MAE': absolute_errors
     })
 

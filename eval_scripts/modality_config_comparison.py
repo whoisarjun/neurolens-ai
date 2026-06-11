@@ -1,6 +1,10 @@
 # Modality configuration comparison script
 
+import sys
 from pathlib import Path
+
+# allow `python eval_scripts/<name>.py` from the repo root to import project packages
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
@@ -13,10 +17,29 @@ FEATURE_DIR = Path('models/features')
 EVAL_DIR = Path('eval_results')
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def require_files(paths):
+    missing = [str(p) for p in paths if not Path(p).exists()]
+    if missing:
+        print('\nMissing required files. Train a current model with `python main.py` first:')
+        for entry in missing:
+            print(f'  - {entry}')
+        sys.exit(1)
+
+
+REQUIRED_ARRAYS = [
+    f'{name}.npy'
+    for split in ('train', 'val', 'test')
+    for name in (
+        f'X_{split}_scaled', f'y_{split}', f'z_{split}',
+        f'y_{split}_mask', f'z_{split}_mask',
+    )
+]
+
 N_ACOUSTICS = 52
 N_LINGUISTICS = 29
 N_SEMANTICS = 18
-N_EMBEDDINGS = 1024
+N_EMBEDDINGS = 128  # HuBERT 1024-dim is reduced to 128 via PCA before being saved
 
 lam = float(input('Lambda: '))
 
@@ -85,7 +108,9 @@ def train_single_config(
             lam=lam
         )
 
-        val_reg_loss, val_mae, val_rmse = model.test_reg(val_loader, regressor, reg_criterion)
+        val_reg_loss, val_mae, val_rmse, val_reg_score = model.test_reg(
+            val_loader, regressor, reg_criterion
+        )
         val_cls_loss, val_acc, val_f1, _ = model.test_cls(val_loader, classifier, cls_criterion)
 
         scheduler_target = val_reg_loss if val_reg_loss is not None else train_stats[1]
@@ -94,9 +119,9 @@ def train_single_config(
 
         score_parts = []
         if val_mae is not None:
-            score_parts.append(-val_mae)
+            score_parts.append(0.5 * val_reg_score)
         if val_f1 is not None:
-            score_parts.append(2.0 * val_f1)
+            score_parts.append(0.5 * val_f1)
         if not score_parts:
             raise RuntimeError('Validation split has no MMSE or diagnosis labels to score.')
         score = sum(score_parts)
@@ -111,13 +136,15 @@ def train_single_config(
     classifier.load_state_dict(best_classifier_state)
 
     # test eval
-    _, test_mae, test_rmse = model.test_reg(test_loader, regressor, reg_criterion)
+    _, test_mae, test_rmse, _ = model.test_reg(test_loader, regressor, reg_criterion)
     _, test_acc, test_f1, _ = model.test_cls(test_loader, classifier, cls_criterion)
 
     return test_mae, test_rmse, test_acc, test_f1
 
 def main():
     print("Loading data...")
+
+    require_files([FEATURE_DIR / name for name in REQUIRED_ARRAYS])
 
     # load scaled features and labels
     X_train = np.load(FEATURE_DIR / 'X_train_scaled.npy')
@@ -135,6 +162,10 @@ def main():
     z_train_mask = np.load(FEATURE_DIR / 'z_train_mask.npy')
     z_val_mask = np.load(FEATURE_DIR / 'z_val_mask.npy')
     z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy')
+
+    # match training: build inverse-frequency MMSE weights from train labels so
+    # create_dataloader's weighting matches main.py (also makes the table indexable).
+    model.set_mmse_freq(np.asarray(y_train)[np.asarray(y_train_mask)])
 
     # configs
     configs = {

@@ -17,6 +17,8 @@ N_LINGUISTICS = 29
 N_SEMANTICS = 18
 N_EMBEDDINGS = 128
 
+# ========== MODEL DEFINITIONS ========== #
+
 # neural network:
 #   E: PCA(1024 -> 128)
 #   A [52 -> 64], L [29 -> 32], S [18 -> 32], E [128 -> 64]
@@ -130,8 +132,14 @@ emb_pca = PCA(n_components=N_EMBEDDINGS)
 scaler_fitted, emb_scaler_fitted = False, False
 emb_pca_fitted = False
 
+# inverse-frequency balancing
+bin_edges = [0, 5, 10, 15, 20, 25, 31]
+mmse_weights_table = [1 for _ in range(len(bin_edges) - 1)]
+
 # initialize model, loss, optimizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# ========== CREATE MODELS ========== #
 
 def new_backbone(n_acoustics=N_ACOUSTICS, n_linguistics=N_LINGUISTICS, n_semantics=N_SEMANTICS, n_embeddings=N_EMBEDDINGS):
     return Backbone(n_acoustics, n_linguistics, n_semantics, n_embeddings).to(device)
@@ -141,7 +149,7 @@ def new_multitask(backbone: Backbone, lr=1e-3, weight_decay=1e-5):
     regressor = MMSERegression(backbone).to(device)
     classifier = CognitiveStatusClassification(backbone).to(device)
 
-    reg_criterion = nn.HuberLoss(delta=1.5)
+    reg_criterion = nn.HuberLoss(delta=1.5, reduction='none')
     cls_criterion = nn.CrossEntropyLoss()
 
     params = [
@@ -233,51 +241,57 @@ def format_metric(value, precision=3):
 # creates a dataloader from inputs
 def create_dataloader(X, y, z, y_mask, z_mask, batch_size=32, shuffle=True):
     X = torch.tensor(X, dtype=torch.float32)
-    y = torch.tensor(y, dtype=torch.float32).unsqueeze(1)
+    y = torch.tensor(y, dtype=torch.float32)
     z = torch.tensor(z, dtype=torch.long)
     y_mask = torch.tensor(y_mask, dtype=torch.bool)
     z_mask = torch.tensor(z_mask, dtype=torch.bool)
+    y_inv_weights = torch.tensor(inv_freq_weights(y, y_mask), dtype=torch.float32)
 
-    dataset = TensorDataset(X, y, z, y_mask, z_mask)
+    dataset = TensorDataset(X, y.unsqueeze(1), z, y_mask, z_mask, y_inv_weights)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     return loader
 
-# ========== TRAINING & TESTING (INDIVIDUAL) ========== #
+# ========== INVERSE-FREQUENCY BALANCING ========== #
 
-# train one batch
-def train_reg_step(x, y, regressor, reg_criterion, reg_optimizer):
-    x = x.to(device)
-    y = y.to(device)
+def set_mmse_freq(mmses: list[int]):
+    global mmse_weights_table
+    counts, _ = np.histogram(mmses, bins=bin_edges)
+    counts = np.maximum(counts, 1)  # prevent 1/0 later
+    mmse_weights_table = 1.0 / counts
 
-    reg_optimizer.zero_grad()
-    pred = regressor(x)
-    loss = reg_criterion(pred, y)
-    loss.backward()
+def inv_freq_weights(mmses, mmse_mask):
+    valid_mmses = np.asarray(mmses)[np.asarray(mmse_mask)]
 
-    # gradient clipping just to be safe
-    torch.nn.utils.clip_grad_norm_(regressor.parameters(), max_norm=1.0)
+    bin_idx = np.clip(np.digitize(valid_mmses, bins=bin_edges) - 1, 0, len(mmse_weights_table) - 1)
+    valid_weights = mmse_weights_table[bin_idx]
+    valid_weights /= valid_weights.mean()
 
-    reg_optimizer.step()
+    weights = np.zeros_like(np.asarray(mmses), dtype=np.float32)
+    weights[np.asarray(mmse_mask)] = valid_weights
+    return weights
 
-    return loss.item()
+# ========== CUSTOM FUNCTIONS ========== #
 
-# train an epoch
-def train_reg_one_epoch(loader, regressor, reg_criterion, reg_optimizer):
-    total = 0.0
-    count = 0
+def stratified_mae(y_true, y_pred):
+    y_true = np.asarray(y_true).reshape(-1)
+    y_pred = np.clip(np.asarray(y_pred).reshape(-1), 0, 30)
 
-    regressor.train()
+    bin_ids = np.digitize(y_true, bins=bin_edges) - 1
+    bin_maes = []
 
-    for batch_x, batch_y, _, batch_y_mask, _ in loader:
-        if not batch_y_mask.any():
+    for idx in range(len(bin_edges) - 1):
+        mask = bin_ids == idx
+        if not mask.any():
             continue
-        batch_x = batch_x[batch_y_mask]
-        batch_y = batch_y[batch_y_mask]
-        loss = train_reg_step(batch_x, batch_y, regressor, reg_criterion, reg_optimizer)
-        total += loss
-        count += 1
 
-    return total / count if count else None
+        mae = np.mean(
+            np.abs(y_true[mask] - y_pred[mask])
+        )
+        bin_maes.append(mae)
+    
+    return np.mean(bin_maes)
+        
+# ========== INDIVIDUAL TESTING ========== #
 
 # test with a test loader
 def test_reg(loader, regressor, reg_criterion):
@@ -288,7 +302,7 @@ def test_reg(loader, regressor, reg_criterion):
 
     with torch.no_grad():
         labeled_batches = 0
-        for batch_x, batch_y, _, batch_y_mask, _ in loader:
+        for batch_x, batch_y, _, batch_y_mask, _, _ in loader:
             if not batch_y_mask.any():
                 continue
             batch_x = batch_x[batch_y_mask]
@@ -297,7 +311,7 @@ def test_reg(loader, regressor, reg_criterion):
             batch_y = batch_y.to(device)
 
             pred = regressor(batch_x)
-            loss = reg_criterion(pred, batch_y)
+            loss = reg_criterion(pred, batch_y).mean()
 
             total_loss += loss.item()
             labeled_batches += 1
@@ -305,46 +319,12 @@ def test_reg(loader, regressor, reg_criterion):
             actuals.extend(batch_y.cpu().numpy())
 
     if not predictions:
-        return None, None, None
+        return None, None, None, None
 
     mae = np.mean(np.abs(np.array(predictions) - np.array(actuals)))
     rmse = np.sqrt(np.mean((np.array(predictions) - np.array(actuals)) ** 2))
-    return total_loss / labeled_batches, mae, rmse
-
-# train one batch
-def train_cls_step(x, z, classifier, cls_criterion, cls_optimizer):
-    x = x.to(device)
-    z = z.to(device)
-
-    cls_optimizer.zero_grad()
-    logits = classifier(x)
-    loss = cls_criterion(logits, z)
-    loss.backward()
-
-    # gradient clipping just to be safe
-    torch.nn.utils.clip_grad_norm_(classifier.net.parameters(), max_norm=1.0)
-
-    cls_optimizer.step()
-
-    return loss.item()
-
-# train an epoch
-def train_cls_one_epoch(loader, classifier, cls_criterion, cls_optimizer):
-    total = 0.0
-    count = 0
-
-    classifier.train()
-
-    for batch_x, _, batch_z, _, batch_z_mask in loader:
-        if not batch_z_mask.any():
-            continue
-        batch_x = batch_x[batch_z_mask]
-        batch_z = batch_z[batch_z_mask]
-        loss = train_cls_step(batch_x, batch_z, classifier, cls_criterion, cls_optimizer)
-        total += loss
-        count += 1
-
-    return total / count if count else None
+    regression_score = 1 - (stratified_mae(actuals, predictions) / 30)
+    return total_loss / labeled_batches, mae, rmse, regression_score
 
 # test with a test loader
 def test_cls(loader, classifier, cls_criterion):
@@ -355,7 +335,7 @@ def test_cls(loader, classifier, cls_criterion):
 
     with torch.no_grad():
         labeled_batches = 0
-        for batch_x, _, batch_z, _, batch_z_mask in loader:
+        for batch_x, _, batch_z, _, batch_z_mask, _ in loader:
             if not batch_z_mask.any():
                 continue
             batch_x = batch_x[batch_z_mask]
@@ -382,18 +362,20 @@ def test_cls(loader, classifier, cls_criterion):
     disp = ConfusionMatrixDisplay(confusion_matrix=confusion, display_labels=list(range(len(cog_statuses))))
     disp.plot(cmap=plt.cm.Blues)  # Use Matplotlib's colormap
     plt.savefig('confusion_matrix.png')
+    plt.close()
 
     return total_loss / labeled_batches, accuracy, f1, confusion
 
 # ========== TRAINING & TESTING (MULTITASK) ========== #
 
 # train one batch
-def train_mt_step(x, y, z, y_mask, z_mask, regressor, classifier, reg_criterion, cls_criterion, optimizer, lam=0.5):
+def train_mt_step(x, y, z, y_mask, z_mask, y_weights, regressor, classifier, reg_criterion, cls_criterion, optimizer, lam=0.5):
     x = x.to(device)
     y = y.to(device)
     z = z.to(device)
     y_mask = y_mask.to(device)
     z_mask = z_mask.to(device)
+    y_weights = y_weights.to(device)
 
     optimizer.zero_grad()
 
@@ -404,7 +386,9 @@ def train_mt_step(x, y, z, y_mask, z_mask, regressor, classifier, reg_criterion,
     loss_cog = None
 
     if y_mask.any():
-        loss_mmse = reg_criterion(pred_mmse[y_mask], y[y_mask])
+        loss_mmse_per_sample = reg_criterion(pred_mmse[y_mask], y[y_mask]).squeeze(1)
+        valid_weights = y_weights[y_mask]
+        loss_mmse = (loss_mmse_per_sample * valid_weights).sum() / valid_weights.sum()
     if z_mask.any():
         loss_cog = cls_criterion(logits[z_mask], z[z_mask])
 
@@ -443,9 +427,9 @@ def train_mt_one_epoch(loader, regressor, classifier, reg_criterion, cls_criteri
     mmse_batches = 0
     cog_batches = 0
 
-    for batch_x, batch_y, batch_z, batch_y_mask, batch_z_mask in loader:
+    for batch_x, batch_y, batch_z, batch_y_mask, batch_z_mask, batch_y_weights in loader:
         loss, loss_mmse, loss_cog = train_mt_step(
-            batch_x, batch_y, batch_z, batch_y_mask, batch_z_mask,
+            batch_x, batch_y, batch_z, batch_y_mask, batch_z_mask, batch_y_weights,
             regressor, classifier,
             reg_criterion, cls_criterion,
             optimizer,
