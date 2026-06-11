@@ -216,6 +216,7 @@ def train(
 def main():
 
     if input('Use saved tensors? (y/n): ') == 'y':
+        X_train_scaled = np.load(FEATURE_DIR / 'X_train_scaled.npy')
         X_val_scaled = np.load(FEATURE_DIR / 'X_val_scaled.npy')
         X_test_scaled = np.load(FEATURE_DIR / 'X_test_scaled.npy')
         y_train = np.load(FEATURE_DIR / 'y_train.npy')
@@ -282,6 +283,9 @@ def main():
         np.save(FEATURE_DIR / 'z_test_mask.npy', z_test_mask)
 
         print(f"\n{GREEN}✓ Saved scaled features + labels to {FEATURE_DIR}{RESET}")
+
+    # calculate inverse frequency balancing weights
+    model.set_mmse_freq(np.asarray(y_train)[np.asarray(y_train_mask)])
 
     backbone = model.new_backbone()
     regressor, classifier, reg_criterion, cls_criterion, optimizer, scheduler = model.new_multitask(backbone)
