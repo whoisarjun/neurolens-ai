@@ -17,6 +17,8 @@ N_LINGUISTICS = 29
 N_SEMANTICS = 18
 N_EMBEDDINGS = 128
 
+# ========== MODEL DEFINITIONS ========== #
+
 # neural network:
 #   E: PCA(1024 -> 128)
 #   A [52 -> 64], L [29 -> 32], S [18 -> 32], E [128 -> 64]
@@ -136,6 +138,8 @@ mmse_weights_table = [1 for _ in range(len(bin_edges) - 1)]
 
 # initialize model, loss, optimizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# ========== CREATE MODELS ========== #
 
 def new_backbone(n_acoustics=N_ACOUSTICS, n_linguistics=N_LINGUISTICS, n_semantics=N_SEMANTICS, n_embeddings=N_EMBEDDINGS):
     return Backbone(n_acoustics, n_linguistics, n_semantics, n_embeddings).to(device)
@@ -265,7 +269,28 @@ def inv_freq_weights(mmses, mmse_mask):
     weights = np.zeros_like(np.asarray(mmses), dtype=np.float32)
     weights[np.asarray(mmse_mask)] = valid_weights
     return weights
+
+# ========== CUSTOM FUNCTIONS ========== #
+
+def stratified_mae(y_true, y_pred):
+    y_true = np.asarray(y_true).reshape(-1)
+    y_pred = np.clip(np.asarray(y_pred).reshape(-1), 0, 30)
+
+    bin_ids = np.digitize(y_true, bins=bin_edges) - 1
+    bin_maes = []
+
+    for idx in range(len(bin_edges) - 1):
+        mask = bin_ids == idx
+        if not mask.any():
+            continue
+
+        mae = np.mean(
+            np.abs(y_true[mask] - y_pred[mask])
+        )
+        bin_maes.append(mae)
     
+    return np.mean(bin_maes)
+        
 # ========== INDIVIDUAL TESTING ========== #
 
 # test with a test loader
@@ -294,11 +319,12 @@ def test_reg(loader, regressor, reg_criterion):
             actuals.extend(batch_y.cpu().numpy())
 
     if not predictions:
-        return None, None, None
+        return None, None, None, None
 
     mae = np.mean(np.abs(np.array(predictions) - np.array(actuals)))
     rmse = np.sqrt(np.mean((np.array(predictions) - np.array(actuals)) ** 2))
-    return total_loss / labeled_batches, mae, rmse
+    regression_score = 1 - (stratified_mae(actuals, predictions) / 30)
+    return total_loss / labeled_batches, mae, rmse, regression_score
 
 # test with a test loader
 def test_cls(loader, classifier, cls_criterion):

@@ -1,6 +1,10 @@
 # Lambda grid search script
 
+import sys
 from pathlib import Path
+
+# allow `python eval_scripts/<name>.py` from the repo root to import project packages
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
@@ -12,6 +16,24 @@ from ml import model
 FEATURE_DIR = Path('models/features')
 EVAL_DIR = Path('eval_results')
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
+
+REQUIRED_ARRAYS = [
+    f'{name}.npy'
+    for split in ('train', 'val', 'test')
+    for name in (
+        f'X_{split}_scaled', f'y_{split}', f'z_{split}',
+        f'y_{split}_mask', f'z_{split}_mask',
+    )
+]
+
+
+def require_files(paths):
+    missing = [str(p) for p in paths if not Path(p).exists()]
+    if missing:
+        print('\nMissing required files. Train a current model with `python main.py` first:')
+        for entry in missing:
+            print(f'  - {entry}')
+        sys.exit(1)
 
 
 def train_with_lambda(
@@ -45,7 +67,9 @@ def train_with_lambda(
             lam=lam
         )
 
-        val_reg_loss, val_mae, val_rmse = model.test_reg(val_loader, regressor, reg_criterion)
+        val_reg_loss, val_mae, val_rmse, val_reg_score = model.test_reg(
+            val_loader, regressor, reg_criterion
+        )
         val_cls_loss, val_acc, val_f1, _ = model.test_cls(val_loader, classifier, cls_criterion)
 
         scheduler_target = val_reg_loss if val_reg_loss is not None else train_stats[1]
@@ -54,9 +78,9 @@ def train_with_lambda(
 
         score_parts = []
         if val_mae is not None:
-            score_parts.append(-val_mae)
+            score_parts.append(0.5 * val_reg_score)
         if val_f1 is not None:
-            score_parts.append(2.0 * val_f1)
+            score_parts.append(0.5 * val_f1)
         if not score_parts:
             raise RuntimeError('Validation split has no MMSE or diagnosis labels to score.')
         score = sum(score_parts)
@@ -71,10 +95,12 @@ def train_with_lambda(
     classifier.load_state_dict(best_classifier_state)
 
     # eval on test
-    _, test_mae, test_rmse = model.test_reg(test_loader, regressor, reg_criterion)
+    _, test_mae, test_rmse, test_reg_score = model.test_reg(
+        test_loader, regressor, reg_criterion
+    )
     _, test_acc, test_f1, _ = model.test_cls(test_loader, classifier, cls_criterion)
 
-    return test_mae, test_rmse, test_acc, test_f1
+    return test_mae, test_rmse, test_reg_score, test_acc, test_f1
 
 
 def evaluate_lambda(
@@ -85,10 +111,10 @@ def evaluate_lambda(
     z_train_mask, z_val_mask, z_test_mask,
     lam
 ):
-    maes, rmses, accs, f1s = [], [], [], []
+    maes, rmses, reg_scores, accs, f1s = [], [], [], [], []
 
     for seed in tqdm(range(10), desc=f"Lambda {lam:.2f}", leave=False):
-        mae, rmse, acc, f1 = train_with_lambda(
+        mae, rmse, reg_score, acc, f1 = train_with_lambda(
             X_train, X_val, X_test,
             y_train, y_val, y_test,
             z_train, z_val, z_test,
@@ -98,28 +124,31 @@ def evaluate_lambda(
         )
         maes.append(mae)
         rmses.append(rmse)
+        reg_scores.append(reg_score)
         accs.append(acc)
         f1s.append(f1)
 
     avg_mae = np.mean(maes)
     avg_rmse = np.mean(rmses)
+    avg_reg_score = np.mean(reg_scores)
     avg_acc = np.mean(accs)
     avg_f1 = np.mean(f1s)
 
     # calc score
-    alpha = 2.0
     score_parts = []
-    if not np.isnan(avg_mae):
-        score_parts.append(-avg_mae)
+    if not np.isnan(avg_reg_score):
+        score_parts.append(0.5 * avg_reg_score)
     if not np.isnan(avg_f1):
-        score_parts.append(alpha * avg_f1)
+        score_parts.append(0.5 * avg_f1)
     score = np.sum(score_parts) if score_parts else np.nan
 
-    return avg_mae, avg_rmse, avg_acc, avg_f1, score
+    return avg_mae, avg_rmse, avg_reg_score, avg_acc, avg_f1, score
 
 
 def main():
     print("Loading data...")
+
+    require_files([FEATURE_DIR / name for name in REQUIRED_ARRAYS])
 
     # load scaled features and labels
     X_train = np.load(FEATURE_DIR / 'X_train_scaled.npy')
@@ -138,6 +167,10 @@ def main():
     z_val_mask = np.load(FEATURE_DIR / 'z_val_mask.npy')
     z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy')
 
+    # match training: build inverse-frequency MMSE weights from train labels so
+    # create_dataloader's weighting matches main.py (also makes the table indexable).
+    model.set_mmse_freq(np.asarray(y_train)[np.asarray(y_train_mask)])
+
     all_results = []
 
     # coarse search
@@ -150,7 +183,7 @@ def main():
 
     for lam in level1_lambdas:
         print(f"\nEvaluating lambda = {lam:.1f}")
-        mae, rmse, acc, f1, score = evaluate_lambda(
+        mae, rmse, reg_score, acc, f1, score = evaluate_lambda(
             X_train, X_val, X_test,
             y_train, y_val, y_test,
             z_train, z_val, z_test,
@@ -163,6 +196,7 @@ def main():
             'Lambda': lam,
             'MAE': mae,
             'RMSE': rmse,
+            'Regression Score': reg_score,
             'Accuracy': acc,
             'Macro-F1': f1,
             'Score': score
@@ -170,7 +204,11 @@ def main():
         level1_results.append(result)
         all_results.append(result)
 
-        print(f"Results: MAE={mae:.3f}, RMSE={rmse:.3f}, Acc={acc:.3f}, F1={f1:.3f}, Score={score:.3f}")
+        print(
+            f"Results: MAE={mae:.3f}, RMSE={rmse:.3f}, "
+            f"Reg Score={reg_score:.3f}, Acc={acc:.3f}, "
+            f"F1={f1:.3f}, Score={score:.3f}"
+        )
 
     # best lambda cat
     best_level1 = max(level1_results, key=lambda x: x['Score'])
@@ -189,7 +227,7 @@ def main():
 
     for lam in level2_lambdas:
         print(f"\nEvaluating lambda = {lam:.2f}")
-        mae, rmse, acc, f1, score = evaluate_lambda(
+        mae, rmse, reg_score, acc, f1, score = evaluate_lambda(
             X_train, X_val, X_test,
             y_train, y_val, y_test,
             z_train, z_val, z_test,
@@ -202,6 +240,7 @@ def main():
             'Lambda': lam,
             'MAE': mae,
             'RMSE': rmse,
+            'Regression Score': reg_score,
             'Accuracy': acc,
             'Macro-F1': f1,
             'Score': score
@@ -209,7 +248,11 @@ def main():
         level2_results.append(result)
         all_results.append(result)
 
-        print(f"Results: MAE={mae:.3f}, RMSE={rmse:.3f}, Acc={acc:.3f}, F1={f1:.3f}, Score={score:.3f}")
+        print(
+            f"Results: MAE={mae:.3f}, RMSE={rmse:.3f}, "
+            f"Reg Score={reg_score:.3f}, Acc={acc:.3f}, "
+            f"F1={f1:.3f}, Score={score:.3f}"
+        )
 
     # find overall best
     all_results_sorted = sorted(all_results, key=lambda x: x['Score'], reverse=True)
@@ -230,7 +273,10 @@ def main():
     top5_df.loc[0, 'Rank'] = '🏆 1'
 
     top5_df = top5_df[
-        ['Rank', 'Lambda', 'MAE', 'RMSE', 'Accuracy', 'Macro-F1', 'Score']
+        [
+            'Rank', 'Lambda', 'MAE', 'RMSE', 'Regression Score',
+            'Accuracy', 'Macro-F1', 'Score'
+        ]
     ].round(3)
 
     print(top5_df.to_string(index=False))

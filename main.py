@@ -163,7 +163,7 @@ def train(
             lam=lam
         )
 
-        val_reg_loss, val_mae, val_rmse = model.test_reg(val_loader, regressor, reg_criterion)
+        val_reg_loss, val_mae, val_rmse, regression_score = model.test_reg(val_loader, regressor, reg_criterion)
         val_cls_loss, val_acc, val_f1, _ = model.test_cls(val_loader, classifier, cls_criterion)
 
         scheduler_target = val_reg_loss if val_reg_loss is not None else train_mmse
@@ -172,9 +172,9 @@ def train(
 
         score_parts = []
         if val_mae is not None:
-            score_parts.append(-val_mae)
+            score_parts.append(0.5 * regression_score)
         if val_f1 is not None:
-            score_parts.append(2 * val_f1)
+            score_parts.append(0.5 * val_f1)
         if not score_parts:
             raise RuntimeError('Validation split has no MMSE or diagnosis labels to score.')
         score = sum(score_parts)
@@ -207,10 +207,10 @@ def train(
     model.load(REG_WEIGHTS_PATH, regressor)
     model.load(CLS_WEIGHTS_PATH, classifier)
 
-    test_reg_loss, test_mae, test_rmse = model.test_reg(test_loader, regressor, reg_criterion)
+    test_reg_loss, test_mae, test_rmse, test_reg_score = model.test_reg(test_loader, regressor, reg_criterion)
     test_cls_loss, test_acc, test_f1, test_cm = model.test_cls(test_loader, classifier, cls_criterion)
 
-    return test_mae, test_rmse, test_acc, test_f1, test_cm
+    return test_mae, test_rmse, test_reg_score, test_acc, test_f1, test_cm
 
 # main flow
 def main():
@@ -290,7 +290,7 @@ def main():
     backbone = model.new_backbone()
     regressor, classifier, reg_criterion, cls_criterion, optimizer, scheduler = model.new_multitask(backbone)
 
-    test_mae, test_rmse, test_acc, test_f1, test_cm = train(
+    test_mae, test_rmse, test_reg_score, test_acc, test_f1, test_cm = train(
         X_train_scaled, X_val_scaled, X_test_scaled,
         y_train, y_val, y_test,
         z_train, z_val, z_test,
@@ -306,7 +306,7 @@ def main():
     print(f"\n{BOLD}{MAGENTA}{'=' * 60}{RESET}")
     print(f"{BOLD}{MAGENTA}FINAL TEST SET RESULTS{RESET}")
     print(f"{BOLD}{MAGENTA}{'=' * 60}{RESET}")
-    print(f"{YELLOW}Regression → MAE: {model.format_metric(test_mae)} | RMSE: {model.format_metric(test_rmse)}{RESET}")
+    print(f"{YELLOW}Regression → MAE: {model.format_metric(test_mae)} | RMSE: {model.format_metric(test_rmse)} | Score: {model.format_metric(test_reg_score)}{RESET}")
     print(f"{YELLOW}Classification → Accuracy: {model.format_metric(test_acc)} | F1: {model.format_metric(test_f1)}{RESET}")
     print(f"{CYAN}Confusion Matrix:\n{test_cm if test_cm is not None else 'n/a'}{RESET}")
     print(f"{BOLD}{MAGENTA}{'=' * 60}{RESET}\n")

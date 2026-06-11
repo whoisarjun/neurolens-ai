@@ -1,7 +1,11 @@
 # Cross-language evaluation script
 
 import json
+import sys
 from pathlib import Path
+
+# allow `python eval_scripts/<name>.py` from the repo root to import project packages
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
@@ -10,6 +14,28 @@ from sklearn.metrics import r2_score
 
 from ml import model
 from utils.language import normalize_language
+
+
+def require_files(paths):
+    missing = [str(p) for p in paths if not Path(p).exists()]
+    if missing:
+        print('\nMissing required files. Train a current model with `python main.py` first:')
+        for entry in missing:
+            print(f'  - {entry}')
+        sys.exit(1)
+
+
+def load_weights(*pairs):
+    try:
+        for path, net in pairs:
+            model.load(path, net)
+    except RuntimeError as exc:
+        print(
+            '\nFailed to load weights into the current 227-dim architecture. '
+            'The tracked weights may belong to an older model; retrain with `python main.py`.\n'
+        )
+        print(exc)
+        sys.exit(1)
 
 TEST_JSON = Path('data_jsons/test.json')
 REG_WEIGHTS_PATH = Path('models/model_weights_reg.pth')
@@ -26,7 +52,7 @@ def compute_r2(loader, regressor):
     targets = []
 
     with torch.no_grad():
-        for xb, yb, _, y_mask, _ in loader:
+        for xb, yb, _, y_mask, _, _ in loader:
             if not y_mask.any():
                 continue
 
@@ -69,7 +95,7 @@ def evaluate_subset(name, mask, X, y, z, y_mask, z_mask, regressor, classifier):
     reg_criterion = torch.nn.HuberLoss(delta=1.5)
     cls_criterion = torch.nn.CrossEntropyLoss()
 
-    _, mae, rmse = model.test_reg(loader, regressor, reg_criterion)
+    _, mae, rmse, _ = model.test_reg(loader, regressor, reg_criterion)
     _, accuracy, f1, _ = model.test_cls(loader, classifier, cls_criterion)
     r2 = compute_r2(loader, regressor) if mae is not None else None
 
@@ -88,6 +114,14 @@ def evaluate_subset(name, mask, X, y, z, y_mask, z_mask, regressor, classifier):
 
 def main():
     print('Loading test split metadata...')
+
+    require_files([
+        TEST_JSON,
+        FEATURE_DIR / 'X_test_scaled.npy', FEATURE_DIR / 'y_test.npy',
+        FEATURE_DIR / 'z_test.npy', FEATURE_DIR / 'y_test_mask.npy',
+        FEATURE_DIR / 'z_test_mask.npy',
+        REG_WEIGHTS_PATH, CLS_WEIGHTS_PATH, SCALER_PATH,
+    ])
 
     with TEST_JSON.open('r', encoding='utf-8') as f:
         test_data = json.load(f)['data']
@@ -111,14 +145,19 @@ def main():
         )
 
     print('Loading trained models...')
+
+    # create_dataloader indexes model.mmse_weights_table with an array; it is a plain
+    # list until training calls set_mmse_freq. Coerce it so eval works without training.
+    # (the inverse-frequency weights are not used by test_reg/test_cls.)
+    model.mmse_weights_table = np.asarray(model.mmse_weights_table, dtype=float)
+
     model.load_scaler(SCALER_PATH)
 
     backbone = model.new_backbone()
     regressor = model.MMSERegression(backbone).to(model.device)
     classifier = model.CognitiveStatusClassification(backbone).to(model.device)
 
-    model.load(REG_WEIGHTS_PATH, regressor)
-    model.load(CLS_WEIGHTS_PATH, classifier)
+    load_weights((REG_WEIGHTS_PATH, regressor), (CLS_WEIGHTS_PATH, classifier))
 
     subset_masks = {
         'English only': languages == 'en',
