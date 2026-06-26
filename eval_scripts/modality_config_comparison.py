@@ -11,6 +11,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+from eval_scripts.eval_stats import format_mean_std, mean_std
 from ml import model
 
 FEATURE_DIR = Path('models/features')
@@ -40,6 +41,9 @@ N_ACOUSTICS = 52
 N_LINGUISTICS = 29
 N_SEMANTICS = 18
 N_EMBEDDINGS = 128  # HuBERT 1024-dim is reduced to 128 via PCA before being saved
+
+# number of training runs (different seeds) aggregated into mean ± std per config
+N_ROUNDS = 10
 
 lam = float(input('Lambda: '))
 
@@ -176,6 +180,9 @@ def main():
         'L+S only': {'A': False, 'L': True, 'S': True, 'E': False},
         'A+S only': {'A': True, 'L': False, 'S': True, 'E': False},
         'A+L+S': {'A': True, 'L': True, 'S': True, 'E': False},
+        'A+L+E': {'A': True, 'L': True, 'S': False, 'E': True},
+        'A+S+E': {'A': True, 'L': False, 'S': True, 'E': True},
+        'L+S+E': {'A': False, 'L': True, 'S': True, 'E': True},
         'A+L+S+E': {'A': True, 'L': True, 'S': True, 'E': True}
     }
 
@@ -188,7 +195,7 @@ def main():
 
         maes, rmses, accs, f1s = [], [], [], []
 
-        for seed in tqdm(range(3), desc=f"Training {config_name}"):
+        for seed in tqdm(range(N_ROUNDS), desc=f"Training {config_name}"):
             mae, rmse, acc, f1 = train_single_config(
                 X_train, X_val, X_test,
                 y_train, y_val, y_test,
@@ -202,29 +209,41 @@ def main():
             accs.append(acc)
             f1s.append(f1)
 
-        avg_mae = np.mean(maes)
-        avg_rmse = np.mean(rmses)
-        avg_acc = np.mean(accs)
-        avg_f1 = np.mean(f1s)
+        mae_mean, mae_std = mean_std(maes)
+        rmse_mean, rmse_std = mean_std(rmses)
+        acc_mean, acc_std = mean_std(accs)
+        f1_mean, f1_std = mean_std(f1s)
 
         results.append({
             'Configuration': config_name,
-            'MAE': avg_mae,
-            'RMSE': avg_rmse,
-            'Accuracy': avg_acc,
-            'Macro-F1': avg_f1
+            'MAE_mean': mae_mean, 'MAE_std': mae_std,
+            'RMSE_mean': rmse_mean, 'RMSE_std': rmse_std,
+            'Accuracy_mean': acc_mean, 'Accuracy_std': acc_std,
+            'Macro-F1_mean': f1_mean, 'Macro-F1_std': f1_std,
         })
 
-        print(f"Results: MAE={avg_mae:.3f}, RMSE={avg_rmse:.3f}, Acc={avg_acc:.3f}, F1={avg_f1:.3f}")
+        print(
+            f"Results: MAE={format_mean_std(mae_mean, mae_std)}, "
+            f"RMSE={format_mean_std(rmse_mean, rmse_std)}, "
+            f"Acc={format_mean_std(acc_mean, acc_std)}, "
+            f"F1={format_mean_std(f1_mean, f1_std)}"
+        )
 
     # save
     df = pd.DataFrame(results)
     df.to_csv(EVAL_DIR / 'modality_config_comparison.csv', index=False)
 
+    # console view: collapse each metric's mean/std columns into "mean ± std"
+    display = df[['Configuration']].copy()
+    for metric in ('MAE', 'RMSE', 'Accuracy', 'Macro-F1'):
+        display[metric] = [
+            format_mean_std(m, s) for m, s in zip(df[f'{metric}_mean'], df[f'{metric}_std'])
+        ]
+
     print("\n" + "=" * 60)
-    print("MODALITY CONFIGURATION COMPARISON RESULTS")
+    print(f"MODALITY CONFIGURATION COMPARISON RESULTS (mean ± std over {N_ROUNDS} runs)")
     print("=" * 60)
-    print(df.to_string(index=False))
+    print(display.to_string(index=False))
     print(f"\nResults saved to {EVAL_DIR / 'modality_config_comparison.csv'}")
 
 if __name__ == '__main__':

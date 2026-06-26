@@ -11,11 +11,18 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+from eval_scripts.eval_stats import format_mean_std, mean_std
 from ml import model
 
 FEATURE_DIR = Path('models/features')
 EVAL_DIR = Path('eval_results')
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
+
+# number of training runs (different seeds) aggregated into mean ± std per lambda
+N_ROUNDS = 10
+
+# metrics reported with a mean ± std (Score is a single derived selection value)
+METRIC_KEYS = ('MAE', 'RMSE', 'Regression Score', 'Accuracy', 'Macro-F1')
 
 REQUIRED_ARRAYS = [
     f'{name}.npy'
@@ -113,7 +120,7 @@ def evaluate_lambda(
 ):
     maes, rmses, reg_scores, accs, f1s = [], [], [], [], []
 
-    for seed in tqdm(range(10), desc=f"Lambda {lam:.2f}", leave=False):
+    for seed in tqdm(range(N_ROUNDS), desc=f"Lambda {lam:.2f}", leave=False):
         mae, rmse, reg_score, acc, f1 = train_with_lambda(
             X_train, X_val, X_test,
             y_train, y_val, y_test,
@@ -128,21 +135,44 @@ def evaluate_lambda(
         accs.append(acc)
         f1s.append(f1)
 
-    avg_mae = np.mean(maes)
-    avg_rmse = np.mean(rmses)
-    avg_reg_score = np.mean(reg_scores)
-    avg_acc = np.mean(accs)
-    avg_f1 = np.mean(f1s)
+    stats = {
+        'MAE': mean_std(maes),
+        'RMSE': mean_std(rmses),
+        'Regression Score': mean_std(reg_scores),
+        'Accuracy': mean_std(accs),
+        'Macro-F1': mean_std(f1s),
+    }
 
-    # calc score
+    # selection score from the metric means (matches the original behaviour)
+    reg_mean = stats['Regression Score'][0]
+    f1_mean = stats['Macro-F1'][0]
     score_parts = []
-    if not np.isnan(avg_reg_score):
-        score_parts.append(0.5 * avg_reg_score)
-    if not np.isnan(avg_f1):
-        score_parts.append(0.5 * avg_f1)
-    score = np.sum(score_parts) if score_parts else np.nan
+    if reg_mean is not None and not np.isnan(reg_mean):
+        score_parts.append(0.5 * reg_mean)
+    if f1_mean is not None and not np.isnan(f1_mean):
+        score_parts.append(0.5 * f1_mean)
+    stats['Score'] = float(np.sum(score_parts)) if score_parts else np.nan
 
-    return avg_mae, avg_rmse, avg_reg_score, avg_acc, avg_f1, score
+    return stats
+
+
+def make_row(lam, stats):
+    row = {'Lambda': lam}
+    for metric in METRIC_KEYS:
+        row[f'{metric}_mean'], row[f'{metric}_std'] = stats[metric]
+    row['Score'] = stats['Score']
+    return row
+
+
+def format_result_line(stats):
+    return (
+        f"Results: MAE={format_mean_std(*stats['MAE'])}, "
+        f"RMSE={format_mean_std(*stats['RMSE'])}, "
+        f"Reg Score={format_mean_std(*stats['Regression Score'])}, "
+        f"Acc={format_mean_std(*stats['Accuracy'])}, "
+        f"F1={format_mean_std(*stats['Macro-F1'])}, "
+        f"Score={stats['Score']:.3f}"
+    )
 
 
 def main():
@@ -183,7 +213,7 @@ def main():
 
     for lam in level1_lambdas:
         print(f"\nEvaluating lambda = {lam:.1f}")
-        mae, rmse, reg_score, acc, f1, score = evaluate_lambda(
+        stats = evaluate_lambda(
             X_train, X_val, X_test,
             y_train, y_val, y_test,
             z_train, z_val, z_test,
@@ -192,23 +222,11 @@ def main():
             lam
         )
 
-        result = {
-            'Lambda': lam,
-            'MAE': mae,
-            'RMSE': rmse,
-            'Regression Score': reg_score,
-            'Accuracy': acc,
-            'Macro-F1': f1,
-            'Score': score
-        }
+        result = make_row(lam, stats)
         level1_results.append(result)
         all_results.append(result)
 
-        print(
-            f"Results: MAE={mae:.3f}, RMSE={rmse:.3f}, "
-            f"Reg Score={reg_score:.3f}, Acc={acc:.3f}, "
-            f"F1={f1:.3f}, Score={score:.3f}"
-        )
+        print(format_result_line(stats))
 
     # best lambda cat
     best_level1 = max(level1_results, key=lambda x: x['Score'])
@@ -227,7 +245,7 @@ def main():
 
     for lam in level2_lambdas:
         print(f"\nEvaluating lambda = {lam:.2f}")
-        mae, rmse, reg_score, acc, f1, score = evaluate_lambda(
+        stats = evaluate_lambda(
             X_train, X_val, X_test,
             y_train, y_val, y_test,
             z_train, z_val, z_test,
@@ -236,28 +254,15 @@ def main():
             lam
         )
 
-        result = {
-            'Lambda': lam,
-            'MAE': mae,
-            'RMSE': rmse,
-            'Regression Score': reg_score,
-            'Accuracy': acc,
-            'Macro-F1': f1,
-            'Score': score
-        }
+        result = make_row(lam, stats)
         level2_results.append(result)
         all_results.append(result)
 
-        print(
-            f"Results: MAE={mae:.3f}, RMSE={rmse:.3f}, "
-            f"Reg Score={reg_score:.3f}, Acc={acc:.3f}, "
-            f"F1={f1:.3f}, Score={score:.3f}"
-        )
+        print(format_result_line(stats))
 
     # find overall best
     all_results_sorted = sorted(all_results, key=lambda x: x['Score'], reverse=True)
     top_5 = all_results_sorted[:5]
-    best_lambda = top_5[0]['Lambda']
 
     # save all results
     df = pd.DataFrame(all_results)
@@ -265,21 +270,20 @@ def main():
     df.to_csv(EVAL_DIR / 'lambda_grid_search.csv', index=False)
 
     print("\n" + "=" * 60)
-    print("TOP 5 LAMBDA CONFIGURATIONS")
+    print(f"TOP 5 LAMBDA CONFIGURATIONS (mean ± std over {N_ROUNDS} runs)")
     print("=" * 60)
 
-    top5_df = pd.DataFrame(top_5)
-    top5_df.insert(0, 'Rank', range(1, len(top5_df) + 1))
-    top5_df.loc[0, 'Rank'] = '🏆 1'
-
-    top5_df = top5_df[
-        [
-            'Rank', 'Lambda', 'MAE', 'RMSE', 'Regression Score',
-            'Accuracy', 'Macro-F1', 'Score'
+    # console view: collapse each metric's mean/std columns into "mean ± std"
+    top5_display = pd.DataFrame({'Rank': list(range(1, len(top_5) + 1))}, dtype=object)
+    top5_display['Lambda'] = [f"{r['Lambda']:.2f}" for r in top_5]
+    for metric in METRIC_KEYS:
+        top5_display[metric] = [
+            format_mean_std(r[f'{metric}_mean'], r[f'{metric}_std']) for r in top_5
         ]
-    ].round(3)
+    top5_display['Score'] = [f"{r['Score']:.3f}" for r in top_5]
+    top5_display.loc[0, 'Rank'] = '🏆 1'
 
-    print(top5_df.to_string(index=False))
+    print(top5_display.to_string(index=False))
 
     print(f"\n{'=' * 60}")
     print(f"All results saved to {EVAL_DIR / 'lambda_grid_search.csv'}")

@@ -118,7 +118,7 @@ def transcribe_all(all_data: list, use_cache_transcripts=True, recycle_augs=True
     transcriber.unload_models()
 
 # ========== STAGE 4 ========== #
-def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_linguistics=False, use_cache_semantics=True):
+def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_linguistics=False, use_cache_semantics=True, regen_missing_semantics=True):
     desc = 'Extracting features'
 
     for data in (pbar := tqdm(all_data, desc=desc)):
@@ -147,11 +147,11 @@ def extract_features_all(all_data: list, use_cache_acoustics=False, use_cache_li
         )
         try:
             pbar.set_description('Extracting semantics')
-            semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics)
+            semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics, regen_on_miss=regen_missing_semantics)
         except semantics.LLMParseError:
             pbar.set_description('Recalcuating semantics')
             try:
-                semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics)
+                semantic_features = semantics.extract(question, transcript, base_fp, use_cache=use_cache_semantics, regen_on_miss=regen_missing_semantics)
             except semantics.LLMParseError:
                 print(f"LLM parse still failing for {base_fp.name}. setting default semantic features. 😭")
                 semantic_features = semantics.default_semantic_features(language=language)

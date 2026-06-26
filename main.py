@@ -70,7 +70,7 @@ def parse_diagnosis(value, sample_name: str):
     return model.cog_statuses.index(value), True
 
 # process split
-def process_split(json_path: Path, split_name: str, use_cache=None, augment=True):
+def process_split(json_path: Path, split_name: str, use_cache=None, augment=True, regen_missing_semantics=True):
     if use_cache is None:
         use_cache = {
             'transcript': True,
@@ -101,7 +101,7 @@ def process_split(json_path: Path, split_name: str, use_cache=None, augment=True
     print(f'{BOLD}{GREEN}Done transcribing {split_name} data ✓{RESET}')
 
     print(f'\n{BOLD}{CYAN}Extracting features from {split_name} data...{RESET}')
-    pipeline.extract_features_all(data, use_cache_acoustics=use_cache['acoustics'], use_cache_linguistics=use_cache['linguistics'], use_cache_semantics=use_cache['semantics'])
+    pipeline.extract_features_all(data, use_cache_acoustics=use_cache['acoustics'], use_cache_linguistics=use_cache['linguistics'], use_cache_semantics=use_cache['semantics'], regen_missing_semantics=regen_missing_semantics)
     print(f'{BOLD}{GREEN}Done extracting features from {split_name} data ✓{RESET}')
 
     print(f'\n{BOLD}{CYAN}Generating embeddings from {split_name} data...{RESET}')
@@ -242,9 +242,15 @@ def main():
             'embeddings': cache.ask('audio embeddings')
         }
 
-        X_train, X_train_emb, y_train, z_train, y_train_mask, z_train_mask = process_split(TRAIN_JSON, 'train', use_cache=use_cache_list, augment=True)
-        X_val, X_val_emb, y_val, z_val, y_val_mask, z_val_mask = process_split(VAL_JSON, 'validation', use_cache=use_cache_list, augment=False)
-        X_test, X_test_emb, y_test, z_test, y_test_mask, z_test_mask = process_split(TEST_JSON, 'test', use_cache=use_cache_list, augment=False)
+        # only ask about uncached semantics if we're using the semantics cache
+        regen_missing_semantics = True
+        if use_cache_list['semantics']:
+            regen_missing_semantics = input('Regenerate uncached semantics? (y/n): ') == 'y'
+            print(f'{"R" if regen_missing_semantics else "Not r"}egenerating uncached semantics\n')
+
+        X_train, X_train_emb, y_train, z_train, y_train_mask, z_train_mask = process_split(TRAIN_JSON, 'train', use_cache=use_cache_list, augment=True, regen_missing_semantics=regen_missing_semantics)
+        X_val, X_val_emb, y_val, z_val, y_val_mask, z_val_mask = process_split(VAL_JSON, 'validation', use_cache=use_cache_list, augment=False, regen_missing_semantics=regen_missing_semantics)
+        X_test, X_test_emb, y_test, z_test, y_test_mask, z_test_mask = process_split(TEST_JSON, 'test', use_cache=use_cache_list, augment=False, regen_missing_semantics=regen_missing_semantics)
         print(f"\n{GREEN}Done processing all data!{RESET}")
 
         # scale features (fit on train only)

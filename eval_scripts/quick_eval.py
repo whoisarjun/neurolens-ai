@@ -9,9 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from sklearn.metrics import ConfusionMatrixDisplay, r2_score
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 
+from eval_scripts.eval_stats import bootstrap_classification, bootstrap_regression, format_mean_std
 from ml import model
+
+# bootstrap resamples used to estimate the mean ± std of each test metric
+N_BOOTSTRAP = 1000
 
 REG_WEIGHTS_PATH = Path('models/model_weights_reg.pth')
 CLS_WEIGHTS_PATH = Path('models/model_weights_cls.pth')
@@ -42,11 +46,6 @@ def load_weights(*pairs):
         sys.exit(1)
 
 
-def compute_score(values):
-    if not values['preds']:
-        return None
-    return r2_score(np.concatenate(values['targets']), np.concatenate(values['preds']))
-
 def main():
     print("Loading test data...")
 
@@ -61,15 +60,10 @@ def main():
     X_test_scaled = np.load(FEATURE_DIR / 'X_test_scaled.npy')
     y_test = np.load(FEATURE_DIR / 'y_test.npy')
     z_test = np.load(FEATURE_DIR / 'z_test.npy')
-    y_test_mask = np.load(FEATURE_DIR / 'y_test_mask.npy')
-    z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy')
+    y_test_mask = np.load(FEATURE_DIR / 'y_test_mask.npy').astype(bool)
+    z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy').astype(bool)
 
     print(f"Test samples: {len(X_test_scaled)}")
-
-    # create_dataloader indexes model.mmse_weights_table with an array; it is a plain
-    # list until training calls set_mmse_freq. Coerce it so eval works without training.
-    # (the inverse-frequency weights are not used by test_reg/test_cls.)
-    model.mmse_weights_table = np.asarray(model.mmse_weights_table, dtype=float)
 
     model.load_scaler(SCALER_PATH)
 
@@ -81,49 +75,38 @@ def main():
     # load weights
     load_weights((REG_WEIGHTS_PATH, regressor), (CLS_WEIGHTS_PATH, classifier))
 
-    # test loader
-    test_loader = model.create_dataloader(
-        X_test_scaled, y_test, z_test, y_test_mask, z_test_mask, batch_size=64, shuffle=False
-    )
-
-    # regression eval
-    reg_criterion = torch.nn.HuberLoss(delta=1.5)
-    _, mae, rmse, _ = model.test_reg(test_loader, regressor, reg_criterion)
-
-    # compute R^2
+    # inference is deterministic, so run a single forward pass and bootstrap the
+    # test set to obtain a mean ± std for each metric.
     regressor.eval()
-    reg_values = {'preds': [], 'targets': []}
+    classifier.eval()
     with torch.no_grad():
-        for xb, yb, _, y_mask, _, _ in test_loader:
-            if not y_mask.any():
-                continue
-            xb = xb[y_mask]
-            yb = yb[y_mask]
-            xb = xb.to(model.device)
-            yb = yb.to(model.device)
-            preds = regressor(xb).squeeze(-1)
-            reg_values['preds'].append(preds.cpu().numpy())
-            reg_values['targets'].append(yb.squeeze(-1).cpu().numpy())
+        X_tensor = torch.tensor(X_test_scaled, dtype=torch.float32).to(model.device)
+        reg_preds = regressor(X_tensor).squeeze(-1).cpu().numpy()
+        cls_preds = torch.argmax(classifier(X_tensor), dim=1).cpu().numpy()
 
-    r2 = compute_score(reg_values)
-
-    # classification eval
-    cls_criterion = torch.nn.CrossEntropyLoss()
-    _, accuracy, f1, confusion = model.test_cls(test_loader, classifier, cls_criterion)
+    reg_stats = bootstrap_regression(reg_preds[y_test_mask], y_test[y_test_mask], N_BOOTSTRAP)
+    cls_stats = bootstrap_classification(z_test[z_test_mask], cls_preds[z_test_mask], N_BOOTSTRAP)
 
     # prints
     print("\n" + "=" * 60)
-    print("QUICK EVALUATION RESULTS")
+    print(f"QUICK EVALUATION RESULTS (bootstrap mean ± std, {N_BOOTSTRAP} resamples)")
     print("=" * 60)
     print(
-        f"Regression → MAE: {model.format_metric(mae)} | "
-        f"RMSE: {model.format_metric(rmse)} | R²: {model.format_metric(r2)}"
+        f"Regression → MAE: {format_mean_std(*reg_stats['MAE'])} | "
+        f"RMSE: {format_mean_std(*reg_stats['RMSE'])} | R²: {format_mean_std(*reg_stats['R²'])}"
     )
-    print(f"Classification → Accuracy: {model.format_metric(accuracy)} | Macro-F1: {model.format_metric(f1)}")
+    print(
+        f"Classification → Accuracy: {format_mean_std(*cls_stats['Accuracy'])} | "
+        f"Macro-F1: {format_mean_std(*cls_stats['Macro-F1'])}"
+    )
     print("=" * 60)
 
-    # confusion matrix
-    if confusion is not None:
+    # confusion matrix (point estimate over the full test split, not resampled)
+    if z_test_mask.any():
+        confusion = confusion_matrix(
+            z_test[z_test_mask], cls_preds[z_test_mask],
+            labels=list(range(len(model.cog_statuses)))
+        )
         disp = ConfusionMatrixDisplay(
             confusion_matrix=confusion,
             display_labels=model.cog_statuses

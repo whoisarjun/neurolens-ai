@@ -10,10 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import r2_score
 
+from eval_scripts.eval_stats import bootstrap_classification, bootstrap_regression, format_mean_std
 from ml import model
 from utils.language import normalize_language
+
+# bootstrap resamples used to estimate the mean ± std of each metric
+N_BOOTSTRAP = 1000
 
 
 def require_files(paths):
@@ -46,70 +49,25 @@ EVAL_DIR = Path('eval_results')
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def compute_r2(loader, regressor):
-    regressor.eval()
-    preds = []
-    targets = []
+def evaluate_subset(name, mask, reg_preds, cls_preds, y, z, y_mask, z_mask):
+    # restrict to subset samples that also carry the relevant label
+    reg_sel = mask & y_mask
+    cls_sel = mask & z_mask
 
-    with torch.no_grad():
-        for xb, yb, _, y_mask, _, _ in loader:
-            if not y_mask.any():
-                continue
+    reg_stats = bootstrap_regression(reg_preds[reg_sel], y[reg_sel], N_BOOTSTRAP)
+    cls_stats = bootstrap_classification(z[cls_sel], cls_preds[cls_sel], N_BOOTSTRAP)
 
-            xb = xb[y_mask].to(model.device)
-            yb = yb[y_mask].to(model.device)
-            batch_preds = regressor(xb).squeeze(-1)
-
-            preds.append(batch_preds.cpu().numpy())
-            targets.append(yb.squeeze(-1).cpu().numpy())
-
-    if not preds:
-        return None
-
-    return r2_score(np.concatenate(targets), np.concatenate(preds))
-
-
-def subset_arrays(mask, X, y, z, y_mask, z_mask):
-    return (
-        X[mask],
-        y[mask],
-        z[mask],
-        y_mask[mask],
-        z_mask[mask],
-    )
-
-
-def evaluate_subset(name, mask, X, y, z, y_mask, z_mask, regressor, classifier):
-    X_sub, y_sub, z_sub, y_mask_sub, z_mask_sub = subset_arrays(mask, X, y, z, y_mask, z_mask)
-
-    loader = model.create_dataloader(
-        X_sub,
-        y_sub,
-        z_sub,
-        y_mask_sub,
-        z_mask_sub,
-        batch_size=64,
-        shuffle=False,
-    )
-
-    reg_criterion = torch.nn.HuberLoss(delta=1.5)
-    cls_criterion = torch.nn.CrossEntropyLoss()
-
-    _, mae, rmse, _ = model.test_reg(loader, regressor, reg_criterion)
-    _, accuracy, f1, _ = model.test_cls(loader, classifier, cls_criterion)
-    r2 = compute_r2(loader, regressor) if mae is not None else None
-
-    return {
+    row = {
         'Split': name,
         'Samples': int(mask.sum()),
-        'MMSE labeled': int(np.sum(y_mask_sub)),
-        'Diagnosis labeled': int(np.sum(z_mask_sub)),
-        'MAE': mae,
-        'RMSE': rmse,
-        'R²': r2,
-        'Accuracy': accuracy,
-        'Macro-F1': f1,
+        'MMSE labeled': int(reg_sel.sum()),
+        'Diagnosis labeled': int(cls_sel.sum()),
     }
+    for metric in ('MAE', 'RMSE', 'R²'):
+        row[f'{metric}_mean'], row[f'{metric}_std'] = reg_stats[metric]
+    for metric in ('Accuracy', 'Macro-F1'):
+        row[f'{metric}_mean'], row[f'{metric}_std'] = cls_stats[metric]
+    return row
 
 
 def main():
@@ -135,8 +93,8 @@ def main():
     X_test_scaled = np.load(FEATURE_DIR / 'X_test_scaled.npy')
     y_test = np.load(FEATURE_DIR / 'y_test.npy')
     z_test = np.load(FEATURE_DIR / 'z_test.npy')
-    y_test_mask = np.load(FEATURE_DIR / 'y_test_mask.npy')
-    z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy')
+    y_test_mask = np.load(FEATURE_DIR / 'y_test_mask.npy').astype(bool)
+    z_test_mask = np.load(FEATURE_DIR / 'z_test_mask.npy').astype(bool)
 
     if len(languages) != len(X_test_scaled):
         raise ValueError(
@@ -146,11 +104,6 @@ def main():
 
     print('Loading trained models...')
 
-    # create_dataloader indexes model.mmse_weights_table with an array; it is a plain
-    # list until training calls set_mmse_freq. Coerce it so eval works without training.
-    # (the inverse-frequency weights are not used by test_reg/test_cls.)
-    model.mmse_weights_table = np.asarray(model.mmse_weights_table, dtype=float)
-
     model.load_scaler(SCALER_PATH)
 
     backbone = model.new_backbone()
@@ -159,36 +112,44 @@ def main():
 
     load_weights((REG_WEIGHTS_PATH, regressor), (CLS_WEIGHTS_PATH, classifier))
 
+    # inference is deterministic; run one forward pass and bootstrap per subset
+    regressor.eval()
+    classifier.eval()
+    with torch.no_grad():
+        X_tensor = torch.tensor(X_test_scaled, dtype=torch.float32).to(model.device)
+        reg_preds = regressor(X_tensor).squeeze(-1).cpu().numpy()
+        cls_preds = torch.argmax(classifier(X_tensor), dim=1).cpu().numpy()
+
     subset_masks = {
         'English only': languages == 'en',
         'Mandarin only': languages == 'zh',
         'All test data': np.ones(len(languages), dtype=bool),
     }
 
-    results = []
-    for subset_name, subset_mask in subset_masks.items():
-        results.append(
-            evaluate_subset(
-                subset_name,
-                subset_mask,
-                X_test_scaled,
-                y_test,
-                z_test,
-                y_test_mask,
-                z_test_mask,
-                regressor,
-                classifier,
-            )
+    results = [
+        evaluate_subset(
+            subset_name, subset_mask,
+            reg_preds, cls_preds,
+            y_test, z_test, y_test_mask, z_test_mask,
         )
+        for subset_name, subset_mask in subset_masks.items()
+    ]
 
     df = pd.DataFrame(results)
     csv_path = EVAL_DIR / 'cross_lang_eval.csv'
     df.to_csv(csv_path, index=False)
 
+    # console view: collapse each metric's mean/std columns into "mean ± std"
+    display = df[['Split', 'Samples', 'MMSE labeled', 'Diagnosis labeled']].copy()
+    for metric in ('MAE', 'RMSE', 'R²', 'Accuracy', 'Macro-F1'):
+        display[metric] = [
+            format_mean_std(m, s) for m, s in zip(df[f'{metric}_mean'], df[f'{metric}_std'])
+        ]
+
     print('\n' + '=' * 72)
-    print('CROSS-LANGUAGE TEST EVALUATION')
+    print(f'CROSS-LANGUAGE TEST EVALUATION (bootstrap mean ± std, {N_BOOTSTRAP} resamples)')
     print('=' * 72)
-    print(df.to_string(index=False, float_format=lambda x: f'{x:.3f}' if pd.notna(x) else 'n/a'))
+    print(display.to_string(index=False))
     print(f'\nResults saved to {csv_path}')
 
 
