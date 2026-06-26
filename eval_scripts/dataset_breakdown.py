@@ -11,9 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import r2_score
 
+from eval_scripts.eval_stats import bootstrap_regression, format_mean_std
 from ml import model
+
+# bootstrap resamples used to estimate the mean ± std of each metric
+N_BOOTSTRAP = 1000
 
 
 def require_files(paths):
@@ -84,11 +87,11 @@ def main():
         dataset_data[dataset]['true'].append(y_test[i])
         dataset_data[dataset]['pred'].append(predictions[i])
 
-    # calc metrics for each dataset
+    # calc metrics for each dataset (bootstrap the valid samples for mean ± std)
     results = []
 
     print("\n" + "=" * 60)
-    print("DATASET BREAKDOWN ANALYSIS")
+    print(f"DATASET BREAKDOWN ANALYSIS (bootstrap mean ± std, {N_BOOTSTRAP} resamples)")
     print("=" * 60)
 
     for dataset in sorted(dataset_data.keys()):
@@ -100,37 +103,28 @@ def main():
         n_valid = int(valid_mask.sum())
         n_invalid = n_samples - n_valid
 
-        if n_valid == 0:
-            mae = np.nan
-            rmse = np.nan
-            r2 = np.nan
-        else:
-            true_valid = true_vals[valid_mask]
-            pred_valid = pred_vals[valid_mask]
-
-            mae = np.mean(np.abs(true_valid - pred_valid))
-            rmse = np.sqrt(np.mean((true_valid - pred_valid) ** 2))
-
-            if n_valid >= 2 and np.var(true_valid) > 0:
-                r2 = r2_score(true_valid, pred_valid)
-            else:
-                r2 = np.nan
+        # bootstrap_regression takes (preds, targets); R² is direction-sensitive
+        stats = bootstrap_regression(pred_vals[valid_mask], true_vals[valid_mask], N_BOOTSTRAP)
+        mae_mean, mae_std = stats['MAE']
+        rmse_mean, rmse_std = stats['RMSE']
+        r2_mean, r2_std = stats['R²']
 
         results.append({
             'Dataset': dataset,
             'Samples': n_samples,
             'Valid Samples': n_valid,
             'Invalid Samples': n_invalid,
-            'MAE': mae,
-            'RMSE': rmse,
-            'R²': r2
+            'MAE_mean': mae_mean, 'MAE_std': mae_std,
+            'RMSE_mean': rmse_mean, 'RMSE_std': rmse_std,
+            'R²_mean': r2_mean, 'R²_std': r2_std,
         })
 
         invalid_note = f", invalid={n_invalid}" if n_invalid else ""
-        r2_display = f"{r2:.3f}" if np.isfinite(r2) else "N/A"
         print(
             f"{dataset}: n={n_samples}, valid={n_valid}{invalid_note}, "
-            f"MAE={mae:.3f}, RMSE={rmse:.3f}, R²={r2_display}"
+            f"MAE={format_mean_std(mae_mean, mae_std)}, "
+            f"RMSE={format_mean_std(rmse_mean, rmse_std)}, "
+            f"R²={format_mean_std(r2_mean, r2_std)}"
         )
 
     # save results

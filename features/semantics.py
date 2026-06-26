@@ -186,7 +186,7 @@ def _ask_features(question: str, transcript: dict, features: list[dict], languag
 
     return results[:len(features)] + [DEFAULT_SEMANTIC_SCORE] * max(0, len(features) - len(results))
 
-def extract(question: str, transcript: dict, filename: Path, use_cache=False, model=MODEL, save=True):
+def extract(question: str, transcript: dict, filename: Path, use_cache=False, model=MODEL, save=True, regen_on_miss=True):
     language = normalize_language(transcript.get('language'))
     feature_list = _load_feature_list(language)
     cache_variant = None if language == 'en' else f'sem:{language}'
@@ -196,6 +196,9 @@ def extract(question: str, transcript: dict, filename: Path, use_cache=False, mo
     if use_cache:
         scores = cache.load(cache_file)
     if scores is None:
+        if use_cache and not regen_on_miss:
+            # don't wait for regeneration, use default scores (and don't cache them)
+            return default_semantic_features(language=language)
         scores = np.array(_ask_features(question, transcript, feature_list, language=language, model=model), dtype=np.float32)
         if save:
             cache.save(cache_file, scores)
