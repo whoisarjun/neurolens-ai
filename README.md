@@ -95,9 +95,9 @@ encoders:
 - semantics: `18 -> 32`
 - PCA-reduced HuBERT: `128 -> 64`
 
-The encoded representations are concatenated, fused through a `128 -> 64`
-shared backbone, and passed to separate MMSE-regression and three-class
-classification heads. Training uses Huber loss for regression, cross-entropy
+The encoded representations are concatenated into a 192-dimensional vector,
+fused through a `192 -> 128 -> 64` shared backbone, and passed to separate
+MMSE-regression and three-class classification heads. Training uses Huber loss for regression, cross-entropy
 for classification, and masked losses so samples may omit either target.
 
 The current training loss is:
@@ -131,14 +131,14 @@ composition.
 The local TAUKADIAL subset is currently labelled English-only even though the
 TAUKADIAL corpus itself is bilingual English and Mandarin/Chinese.
 
-Current metadata contains 1,657 original recordings before training
+Current metadata contains 1,550 original recordings before training
 augmentation:
 
 | Split | Samples | English | Mandarin | MMSE-labelled | Diagnosis-labelled |
 |---|---:|---:|---:|---:|---:|
-| Train | 1,312 | 963 | 349 | 963 | 1,312 |
-| Validation | 173 | 129 | 44 | 129 | 173 |
-| Test | 172 | 129 | 43 | 129 | 172 |
+| Train | 1,219 | 870 | 349 | 870 | 1,219 |
+| Validation | 166 | 122 | 44 | 122 | 166 |
+| Test | 165 | 122 | 43 | 122 | 165 |
 
 These counts describe the local metadata currently present in
 `data_jsons/`; they are not corpus-wide statistics.
@@ -191,46 +191,34 @@ The saved `X_*_scaled.npy` arrays produced by current code have 227 columns.
 
 ## Evaluation Status
 
-The repository contains historical plots, CSV files, scalers, and weights
-from the earlier 1123-dimensional architecture. They do **not** describe the
-current PCA-based 227-dimensional implementation and should not be presented
-as current results without retraining and regenerating all evaluation
-artifacts.
+The scalers, PCA, and weights tracked in `models/`, along with the plots and
+CSV files in `eval_results/`, correspond to the current PCA-based
+227-dimensional architecture. The evaluation scripts in `eval_scripts/` run
+against the 227-dimensional arrays written by `main.py`.
 
-The evaluation scripts also predate the preprocessing change. Some will work
-after current 227-dimensional arrays and matching weights are generated;
-`eval_scripts/modality_config_comparison.py` still assumes 1024 embedding
-columns and requires an implementation update.
-
-For this reason, this README intentionally does not claim a current benchmark
-score. See [HOW_TO_USE.md](HOW_TO_USE.md#evaluation-and-compatibility) for the
-compatibility matrix.
+Regenerate the feature arrays, checkpoints, and evaluation artifacts from a
+single training run before comparing metrics across changes. See
+[HOW_TO_USE.md](HOW_TO_USE.md#evaluation-and-compatibility) for the per-script
+evaluation notes.
 
 ## Repository Structure
 
 ```text
 main.py                 end-to-end preprocessing and multitask training
-server.py               experimental Flask inference API
 features/               acoustic, linguistic, and semantic extraction
 processing/             cleanup, ASR, embeddings, and batch orchestration
 ml/                     augmentation and model implementation
 data_jsons/             local train/validation/test metadata and split builder
 eval_scripts/           evaluation and ablation utilities
-eval_results/           historical generated plots and tables
+eval_results/           generated plots and tables
 llm_eval/               experimental semantic-rater evaluation utilities
-models/                 tracked historical artifacts; generated arrays ignored
+models/                 tracked model artifacts; generated arrays ignored
 ```
 
 ## Known Limitations
 
 - The project assumes locally licensed datasets and is not reproducible from
   the Git repository alone.
-- The tracked weights and scaler belong to the previous 1123-dimensional
-  model. Current training additionally requires an embedding scaler and PCA
-  artifact, which are not tracked at present.
-- `server.py` uses the old 1123-dimensional preprocessing path and does not
-  load the embedding scaler or PCA. It is not compatible with a newly trained
-  227-dimensional model.
 - The current model does not constrain MMSE predictions to the clinical
   0-30 range.
 - Semantic scoring depends on a nondeterministic external runtime despite
