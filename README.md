@@ -112,7 +112,7 @@ when both labels are present.
 
 The local, Git-ignored split metadata references seven corpora:
 
-| Corpus key | Language in current metadata | Primary labels used |
+| Corpus key | Language in current /metadata | Primary labels used |
 |---|---|---|
 | `ADReSS-IS2020` | English | MMSE, diagnosis |
 | `ADReSSo21` | English | MMSE, diagnosis |

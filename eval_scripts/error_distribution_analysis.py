@@ -44,6 +44,13 @@ EVAL_DIR = Path('eval_results')
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
 
 def main():
+    mode = ''
+    while mode not in ('full', 'select'):
+        mode = input(
+            "Average Prediction line mode - 'full' or 'select' (MMSE >= 12 only)? "
+        ).strip().lower()
+    select_mode = mode == 'select'
+
     print("Loading test data...")
 
     require_files([
@@ -227,9 +234,17 @@ def main():
              label='Perfect Prediction (y=x)', zorder=100)
 
     # calc and plot binned avg preds
-    sort_idx = np.argsort(all_true)
-    sorted_true = all_true[sort_idx]
-    sorted_pred = all_pred[sort_idx]
+    if select_mode:
+        red_mask = all_true >= 12
+        red_true = all_true[red_mask]
+        red_pred = all_pred[red_mask]
+    else:
+        red_true = all_true
+        red_pred = all_pred
+
+    sort_idx = np.argsort(red_true)
+    sorted_true = red_true[sort_idx]
+    sorted_pred = red_pred[sort_idx]
 
     n_bins = 15
     bin_edges = np.linspace(sorted_true.min(), sorted_true.max(), n_bins + 1)
